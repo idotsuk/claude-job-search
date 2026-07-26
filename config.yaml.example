@@ -1,0 +1,136 @@
+# claude-job-search configuration
+#
+# Copy to config.yaml and edit:   cp config.yaml.example config.yaml
+# config.yaml is gitignored — everything personal lives here (and in data/),
+# never in the skill text. The /job-search skill reads this file at the start
+# of every run and binds the values below into its search/scan steps.
+#
+# Fields marked REQUIRED must be set before the first run. Everything else
+# can stay at its default; integrations you don't enable are skipped with a
+# note in the run report.
+
+# ─── Profile — drives search relevance filtering ─────────────────────────────
+profile:
+  # REQUIRED. One line describing the role you're hunting. Free text — used by
+  # the skill to judge fit when triaging listings.
+  role_focus: "Senior Backend Engineer — distributed systems, APIs, infrastructure"
+
+  # REQUIRED. Domains/technologies a role should touch to be relevant.
+  interests: [distributed systems, developer tools, platform engineering]
+
+  # Optional. Roles matching these are filtered out at intake.
+  anti_interests: [frontend-only, embedded, gambling]
+
+  # REQUIRED. Acceptable seniority levels (used in triage and title filters).
+  seniority: [Senior, Staff, Principal]
+
+  # REQUIRED. Cities/regions you'll work in. First entry is the "home" market.
+  locations: [Berlin, Germany]
+
+  # Optional, default false. If false, roles whose location says only "Remote"
+  # without matching your locations are dropped (remote-anywhere posts rarely
+  # accept out-of-region candidates).
+  accept_remote_without_location_match: false
+
+  # Optional. Languages recruiters message you in — selects which keyword sets
+  # under integrations.whatsapp.keywords are used.
+  languages: [en, de]
+
+  # REQUIRED. IANA timezone for dates and calendar sync.
+  timezone: Europe/Berlin
+
+# ─── Search ───────────────────────────────────────────────────────────────────
+search:
+  # Optional. Companies whose careers boards get swept directly every run.
+  # Empty list = skip the company-specific pass; rely on the source registry.
+  target_companies: []
+
+  # Optional. Companies never to list (wrong domain, personal exclusions).
+  company_blocklist: []
+
+  # Optional. Companies where a prior process ended (rejection or you passed).
+  # New roles at these are recorded as skip:rejected, never queued.
+  rejected_companies: []
+
+  # Optional. Staffing/recruiting agencies to filter out of sweep results.
+  staffing_agency_blocklist: []
+
+  # Optional. Whole domains to drop at intake triage (curated-list sweeps).
+  excluded_domains: []          # e.g. [defense, crypto, adtech]
+
+  linkedin:
+    # REQUIRED if the LinkedIn sweep is enabled. Quoted exact phrases only —
+    # LinkedIn matches unquoted keywords against the whole posting body
+    # (~10% signal); quoted phrases force title-side matching (~30%+).
+    keywords: ['"distributed systems"', '"senior backend"', '"platform engineer"']
+
+    # REQUIRED if using LinkedIn. Value for the location= URL parameter.
+    location_param: "Germany"
+
+    # Optional. f_TPR posting-age window. r1209600 = past 2 weeks (default);
+    # r604800 (past week) is usually too tight.
+    time_window: r1209600
+
+    # Optional. Pagination cap per keyword.
+    max_pages: 10
+
+  # Optional. Local ecosystem names to seed source discovery meta-queries:
+  # tech press, VC firms, startup-list publishers in your market.
+  discovery_hints: []           # e.g. ["Sifted", "local VC portfolio boards"]
+
+# ─── Integrations — all opt-in; missing ones are skipped gracefully ──────────
+integrations:
+  gmail:
+    enabled: true               # requires a Gmail MCP/connector in Claude Code
+    window_days: 14             # inbox scan window
+
+  whatsapp:
+    enabled: false              # see docs/whatsapp-setup.md (GOWA bridge)
+    chat_db: ~/gowa/src/storages/chatstorage.db      # messages
+    contacts_db: ~/gowa/src/storages/whatsapp.db     # whatsmeow_contacts
+    # Recruiter-signal keywords for the SQL sweep, per language. Only the
+    # sets matching profile.languages are used.
+    keywords:
+      en: [recruit, opportunit, position, hiring, resume, "your profile", interview]
+      de: [Stelle, Bewerbung, Vorstellungsgespräch, Lebenslauf]
+    # Chats with more total messages than this are deprioritized — high-volume
+    # chats are almost always friends, not recruiters.
+    max_chat_messages: 80
+
+  calendar:
+    enabled: false              # sync scheduled interviews to Google Calendar
+
+  browser:
+    # System Chrome for the Playwright sweep scripts (bundled Chromium gets
+    # challenged by LinkedIn). Adjust for your OS.
+    chrome_path: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+
+# ─── Applicant — used by /apply and scripts/apply_driver.py ──────────────────
+# PII lives here; this file is gitignored. REQUIRED only for /apply.
+applicant:
+  first_name: Jane
+  last_name: Doe
+  email: jane@example.com
+  phone: "+49 30 12345678"
+  linkedin: https://www.linkedin.com/in/janedoe/
+  github: https://github.com/janedoe
+  city: "Berlin, Germany"
+  country: Germany
+  pronouns: ""                  # optional; leave empty to skip pronoun fields
+  cv_path: ~/Documents/jane_doe_cv.pdf     # verified to exist before a session
+  salary_expectation: "85000 EUR/year gross"
+  notice_period: "3 months"
+  work_setup: "Hybrid preferred; remote OK"
+  work_authorization:
+    Germany: yes
+    EU: yes
+    US_sponsorship_needed: yes
+  # Optional freeform supplement (mailing address, current-company wording,
+  # per-field guidance). Gitignored. See templates/standard-answers.md.example.
+  standard_answers_file: standard-answers.md
+
+# ─── Pipeline tuning ──────────────────────────────────────────────────────────
+pipeline:
+  # Applied/Screen/Interviewing listings with no activity for this many days
+  # are auto-demoted to Stale by scripts/mark_stale.py.
+  stale_after_days: 7

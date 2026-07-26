@@ -1,0 +1,13 @@
+# Personal config — NEVER commit
+config.yaml
+config.*.yaml
+!config.yaml.example
+standard-answers.md
+
+# All run state (listings, runs, reports, registry, browser sessions)
+data/
+
+# Cruft
+__pycache__/
+*.pyc
+.DS_Store

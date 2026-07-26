@@ -1,0 +1,29 @@
+# Application Standard Answers
+
+Optional freeform supplement to the `applicant:` block in `config.yaml`.
+Copy to the repo root as `standard-answers.md` (gitignored) and point
+`applicant.standard_answers_file` at it. Use it for anything a form asks
+that doesn't fit the structured config: mailing address, current-company
+wording, per-field guidance.
+
+## Personal
+
+- **Mailing address:** 123 Example St, Berlin, 10115 (for forms requiring street/city/ZIP)
+
+## Logistics
+
+- **Current company:** — (leave blank or "—"; most recent: <Previous Employer>)
+- **Willing to travel:** Yes (within reason)
+- **"Side businesses" / "other obligations":** No
+
+## How to use
+
+When prefilling application forms (Greenhouse, Ashby, Lever, Comeet, Workday,
+SmartRecruiters):
+
+- Use `config.yaml applicant:` values exactly as written for structured fields.
+- For salary fields, use `applicant.salary_expectation` (convert monthly/annual
+  as the form requires).
+- For "are you legally authorized to work in X?" — answer from
+  `applicant.work_authorization`.
+- Skip "why this role" / cover-letter style fields — leave them for the user.
