@@ -117,7 +117,8 @@ applicant:
   city: "Berlin, Germany"
   country: Germany
   pronouns: ""                  # optional; leave empty to skip pronoun fields
-  cv_path: ~/Documents/jane_doe_cv.pdf     # verified to exist before a session
+  # /job-search asks for this on first run if unset; /apply verifies it exists.
+  cv_path: ~/Documents/jane_doe_cv.pdf
   salary_expectation: "85000 EUR/year gross"
   notice_period: "3 months"
   work_setup: "Hybrid preferred; remote OK"

@@ -28,6 +28,7 @@ Before anything else, establish **today's actual date** from the environment con
 
 2. **Bind these variables** from config and use them everywhere below. Echo the bound values (one compact block) into the conversation and later into the run log, so misbinding is visible:
    - `{role_focus}`, `{interests}`, `{anti_interests}`, `{seniority}`, `{locations}`, `{languages}`, `{timezone}` ← `profile.*`
+   - `{cv_path}` ← `applicant.cv_path`
    - `{target_companies}`, `{company_blocklist}`, `{rejected_companies}`, `{agency_blocklist}`, `{excluded_domains}` ← `search.*`
    - `{li_keywords}`, `{li_location}`, `{li_tpr}` ← `search.linkedin.*`; `{discovery_hints}` ← `search.discovery_hints`
    - `{gmail_enabled}`, `{gmail_window}`, `{wa_enabled}`, `{wa_chat_db}`, `{wa_contacts_db}`, `{wa_keywords}` (only the language sets in `{languages}`), `{wa_max_chat}`, `{cal_enabled}`, `{chrome_path}` ← `integrations.*`
@@ -43,6 +44,8 @@ Before anything else, establish **today's actual date** from the environment con
    - **Calendar** — is a Google Calendar MCP available AND `{cal_enabled}`? Gate step 7a.
 
    ATS JSON APIs and web search need no integration — a run with zero connections still sweeps company boards and discovers sources.
+
+5. **Ask for the CV if it's missing.** If `{cv_path}` is unset or the file doesn't exist, ask the user for the path to their current CV/resume (once per run, not per step) and write it back to `config.yaml` under `applicant.cv_path`. Having the CV on file lets triage and `/apply` work from the user's actual experience instead of the one-line `role_focus`. If the user declines or doesn't have one handy, continue the run normally and note it under `sources_skipped`-style remarks in the run report body — never block a run on it.
 
 ### 1. Load existing listings
 

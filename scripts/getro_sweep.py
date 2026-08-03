@@ -72,7 +72,7 @@ def main():
             executable_path=CHROME,
             headless=False,
             viewport={'width': 1400, 'height': 950},
-            args=['--disable-blink-features=AutomationControlled', '--window-position=-32000,-32000', '--disable-backgrounding-occluded-windows'],
+            args=['--disable-blink-features=AutomationControlled', '--disable-backgrounding-occluded-windows'],
         )
         page = ctx.new_page()
         page.goto(args.url, timeout=30000)
