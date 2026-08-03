@@ -121,7 +121,9 @@ The same persistent-Chrome runtime is reused — per-source profiles live under 
 
 **When a registry source needs a scraper**, build it as `scripts/<source>_sweep.py`, mirroring `linkedin_sweep.py`'s shape: pagination loop with a `MAX_PAGES`-style cap and "stop at zero new" rule, persistent profile at `data/.sessions/<source>/`, JSON to stdout for the shared downstream filter pipeline, and the same post-hoc blocklist filter. A generic driver for Getro-hosted boards ships as `scripts/getro_sweep.py` — many VC portfolio job boards are Getro-hosted and share a DOM. For quick SPA smoke-tests, `scripts/page_dump.py` renders any URL and dumps text + links.
 
-**Tier-2 demotion rule for SPA-blocked sources:** If a source is `unreachable` solely because the scraper hasn't been written yet (vs. real anti-bot), don't demote — flag in the run report under "needs Playwright scraper." Demotion threshold (`unreachable_streak >= 3` → drop) applies only after Playwright has been attempted and still failed.
+**Tier-2 demotion rule for SPA-blocked sources:** If a source is `unreachable` solely because the scraper hasn't been written yet (vs. real anti-bot), don't demote — flag in the run report under "needs Playwright scraper." The `unreachable_streak >= 3` threshold applies only after Playwright has been attempted and still failed — and it moves the source to `parked` (`retry_after: today+30d`), never to `dropped`: tooling-blocked is not signal-empty.
+
+**Parked retries:** any `parked:` entry whose `retry_after` has passed gets one smoke test this run. Success → restore to `tier: 2` (streaks reset, `last_success` set); still unreachable → `retry_after += 30d`, note in the run report.
 
 #### c) Probation smoke-tests
 For each entry in `sources.yaml:probation`, attempt the source. **Use Playwright first for any VC portfolio / careers / Getro / Greenhouse / Lever / Workday URL** — plain fetch returns SPA shells for these. WebFetch is only acceptable for plain-HTML news feeds or GitHub-style static pages.
@@ -134,12 +136,12 @@ For each entry in `sources.yaml:probation`, attempt the source. **Use Playwright
 
 Then count how many *new* (not already in listings tree) matching roles surface and apply:
 
-- **≥1 valid result** → promote to `tier: 2` with `last_yield`, `runs_active: 1`, `consecutive_zeroes: 0`, `last_status: success`. Move out of `probation`.
-- **0 results, `last_status: empty`, first run** → leave in `probation` with `consecutive_zeroes: 1`.
-- **0 results, `last_status: empty`, second consecutive run** → move to `dropped` with the reason in `notes`.
-- **0 results, `last_status: unreachable`** → leave in `probation`, **DO NOT increment `consecutive_zeroes`**. Flag the source in the run report under "unreachable sources" so it's visible the cause was tooling, not signal. After 3 consecutive `unreachable` runs, drop with reason `unreachable: needs Playwright scraper`.
+- **≥1 valid result** → promote to `tier: 2` with `last_yield`, `runs_active: 1`, `consecutive_zeroes: 0`, `last_status: success`, `last_success: today`. Move out of `probation`.
+- **0 results, `last_status: empty`, first test** → leave in `probation` with `consecutive_zeroes: 1` and note the test date.
+- **0 results, `last_status: empty`, second test** → drop ONLY if this test is **≥7 days after the first zero-yield test**; if sooner, skip the re-test and leave it queued (a daily run cadence must not fast-fail a board that posts weekly). On a qualifying second zero → move to `dropped` with the reason in `notes`.
+- **0 results, `last_status: unreachable`** → leave in `probation`, **DO NOT increment `consecutive_zeroes`**. Flag the source in the run report under "unreachable sources" so it's visible the cause was tooling, not signal. After 3 consecutive `unreachable` runs, move to `parked` with `retry_after: today+30d`.
 
-The same `last_status` logic applies to tier-2 sources in step 7b: scrape failures don't count toward `consecutive_zeroes`-driven demotion.
+The same `last_status` logic applies to tier-2 sources in step 7b: scrape failures never count toward yield-based demotion.
 
 #### d) Discover new candidates (always, baked into the same step)
 Before finishing the search pass, run 2–3 meta-searches for net-new sources we aren't already tracking. Build queries from `{locations}`, `{interests}`, and `{discovery_hints}`. Query templates (substitute your market):
@@ -339,11 +341,19 @@ After the Gmail (step 6) and WhatsApp (step 7) scans, make sure every upcoming i
 Two scripted maintenance steps before the run report:
 
 1. **Update `data/sources.yaml`** with this run's results:
-   - For every source swept: bump `last_tried` to `{today}`, set `last_yield` to the count of listings added from that source this run, set `last_status` to `success` | `empty` | `unreachable` per step 3c, increment `cumulative_yield`, increment `runs_active`.
-   - `consecutive_zeroes` update rule: if `last_yield >= 1`, reset to 0. Else if `last_status == empty`, increment by 1. Else if `last_status == unreachable`, leave unchanged.
+   - For every source swept: bump `last_tried` to `{today}`, set `last_yield` to the count of listings added from that source this run, set `last_status` to `success` | `empty` | `unreachable` per step 3c, increment `cumulative_yield`, increment `runs_active`. If `last_yield >= 1`, also set `last_success: {today}`.
+   - `consecutive_zeroes` update rule (informational): if `last_yield >= 1`, reset to 0. Else if `last_status == empty`, increment by 1. Else if `last_status == unreachable`, leave unchanged.
+   - **Maintain `proven:`** from listings attribution: if any listing with `source: <id>` has an `applied_date` → at least `proven: application`; if any such listing reached Screen/Interviewing (ever, not just currently) → `proven: loop`. Never downgrade `proven`.
+   - **Backfill `last_success`** for any tier-2 entry missing it: the latest `first_added` among listings attributed to that source; if none, its `seeded`/first-sweep date.
    - For each new candidate discovered in step 3d: append to the `probation` list with `seeded: {today}`, `url`, and one-line `rationale`.
-   - Apply demotion rules (tier-2 only; tier-1 is exempt): `consecutive_zeroes >= 5` → suggest moving to `dropped` in the run report (don't auto-move; flag for review). `unreachable` runs are tracked separately via `unreachable_streak` — at `unreachable_streak >= 3`, suggest demotion with reason "tooling-blocked, needs Playwright".
-   - Apply probation outcome rules from step 3c.
+   - **Apply demotion rules (days-based + yield-weighted — see the registry header):**
+     - `dry_days` = `{today}` − `last_success` (never-successful: − first sweep date).
+     - `tier: 2` and `dry_days >= 14` and swept ≥3 times in that window → suggest moving to `dropped` in the run report (don't auto-move; flag for review).
+     - `proven: application` → threshold is `dry_days >= 28` instead of 14.
+     - `proven: loop` or `tier: 1` → **never** suggest demotion on dryness.
+     - One-off/annual list sources never accrue dryness — they retire on their own "do not re-sweep before next edition" note.
+     - `unreachable_streak >= 3` → move to `parked` with `retry_after: {today}+30d`; never `dropped` for reachability.
+   - Apply probation outcome rules from step 3c (second zero-yield test must be ≥7 days after the first).
 
 2. **Auto-stale sweep**: `python3 scripts/mark_stale.py`. Demotes any Applied/Screen/Interviewing listing inactive for >`{stale_days}` days to `status: Stale`. Run before the chart so Interviewing reflects real momentum, not ghosts.
 

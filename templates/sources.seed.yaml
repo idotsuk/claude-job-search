@@ -9,22 +9,40 @@
 #   1          = must sweep every run (high-value, low-cost). Exempt from demotion.
 #   2          = sweep every run + measure for rotation
 #   probation  = smoke-test (1 query) on next run; promote if it yields >=1 valid listing,
-#                drop after 2 consecutive zero-yield runs
+#                drop after 2 zero-yield smoke tests spanning >= 7 days (if the 2nd test would
+#                land < 7 days after the 1st, defer it — a daily run cadence must not fast-fail
+#                a board that posts weekly)
+#   parked     = tooling-blocked (unreachable_streak >= 3). NOT dropped: once today >= retry_after,
+#                give it one smoke test — success → tier 2 (streaks reset), still blocked →
+#                retry_after += 30 days. "Can't reach" is not "nothing there".
 #   dropped    = no longer swept; kept for memory / audit trail
+#
+# Demotion policy (days-based + yield-weighted — run-counted strike rules break when the
+# run cadence changes; three zero-runs means three weeks at weekly cadence but three days
+# at daily cadence, which silently kills slow-but-productive boards):
+#   - last_success = ISO date of the most recent sweep with last_status == success
+#   - dry_days     = today - last_success (never-successful: today - first sweep date)
+#   - Tier-2 demotion: suggest dropping when dry_days >= 14 AND the source was swept >= 3
+#     times in that window.
+#   - Proven-source credit (set `proven:` from listings-frontmatter attribution):
+#       proven: application  = >=1 attributed listing ever reached Applied → 28 dry-day window
+#       proven: loop         = >=1 attributed listing reached Screen/Interviewing →
+#                              demotion-exempt, like tier-1
 #
 # Conventions:
 #   - last_yield     = listings *added* from this source in the most recent run
 #   - cumulative_yield = lifetime listings traced to this source
-#   - consecutive_zeroes = runs in a row with last_yield == 0 AND last_status == empty (drives demotion)
-#   - unreachable_streak = consecutive runs in a row where last_status == unreachable (separate demotion path)
+#   - consecutive_zeroes = runs in a row with last_yield == 0 AND last_status == empty (informational)
+#   - unreachable_streak = consecutive runs in a row where last_status == unreachable
 #   - runs_active    = number of runs this source has been swept in
 #   - last_tried     = ISO date of last sweep
+#   - last_success   = ISO date of last sweep with last_status == success (drives dry_days)
 #   - last_status    = success | empty | unreachable
 #                      success     = crawl worked, yielded >=1 listing
 #                      empty       = crawl worked, 0 listings — counts toward consecutive_zeroes
 #                      unreachable = HTTP 4xx/5xx, SPA-blocked, Cloudflare/anti-bot, tool error
 #                                    → does NOT increment consecutive_zeroes; tracked in unreachable_streak instead.
-#                                    Demote with reason "tooling-blocked" at unreachable_streak >= 3.
+#                                    At unreachable_streak >= 3 → tier: parked, never dropped for reachability.
 #
 # Listing files MUST cite a source ID in their `source:` frontmatter (e.g. `source: linkedin_authenticated`)
 # so that scripts/source_yield.py can attribute new listings back to here.
