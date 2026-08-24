@@ -12,6 +12,16 @@ from pathlib import Path
 
 import yaml
 
+# Canonical listing status enum, shared by generate_chart.py and
+# generate_run_report.py so their status breakdowns can't drift apart.
+STATUS_ORDER = ['To Apply', 'Applied', 'Screen', 'Interviewing', 'Offer', 'Stale', 'Rejected', 'Skipped', 'Passed']
+STATUS_COLORS = {
+    'To Apply': '#42a5f5', 'Applied': '#26a69a', 'Screen': '#ffa726',
+    'Interviewing': '#ab47bc', 'Offer': '#66bb6a',
+    'Stale': '#8d6e63',
+    'Rejected': '#ef5350', 'Skipped': '#bdbdbd', 'Passed': '#90a4ae',
+}
+
 
 def data_root() -> Path:
     return Path(os.environ.get('JOB_SEARCH_DATA', 'data'))

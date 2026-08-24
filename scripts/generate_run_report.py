@@ -27,13 +27,8 @@ RUNS_DIR = DATA / 'runs'
 REPORTS_DIR = DATA / 'reports'
 CHART_PATH = DATA / 'reports' / 'chart-latest.png'
 
-STATUS_ORDER = ['Interviewing', 'Screen', 'Offer', 'Applied', 'Stale', 'To Apply', 'Rejected', 'Skipped']
-STATUS_COLORS = {
-    'To Apply': '#42a5f5', 'Applied': '#26a69a', 'Screen': '#ffa726',
-    'Interviewing': '#ab47bc', 'Offer': '#66bb6a',
-    'Stale': '#8d6e63',
-    'Rejected': '#ef5350', 'Skipped': '#bdbdbd',
-}
+STATUS_ORDER = lib.STATUS_ORDER
+STATUS_COLORS = lib.STATUS_COLORS
 
 
 def parse_frontmatter(text):
