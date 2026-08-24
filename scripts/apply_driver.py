@@ -67,44 +67,69 @@ def prefill_common(page):
     for sel in ['input[name*="first" i]', 'input[id*="first" i]', 'input[aria-label*="first name" i]', 'input[placeholder*="first name" i]']:
         if try_fill(sel, STD['first_name'], 'First Name'):
             break
+    else:
+        if STD['first_name']:
+            skipped.append('First Name')
     # Last Name
     for sel in ['input[name*="last" i]', 'input[id*="last" i]', 'input[aria-label*="last name" i]', 'input[placeholder*="last name" i]']:
         if try_fill(sel, STD['last_name'], 'Last Name'):
             break
+    else:
+        if STD['last_name']:
+            skipped.append('Last Name')
     # Full Name (single field)
     for sel in ['input[name="name"]', 'input[id="name"]', 'input[aria-label="Full name" i]']:
         if try_fill(sel, STD['full_name'], 'Full Name'):
             break
+    else:
+        if STD['full_name']:
+            skipped.append('Full Name')
     # Email
     for sel in ['input[type="email"]', 'input[name*="email" i]', 'input[id*="email" i]', 'input[aria-label*="email" i]']:
         if try_fill(sel, STD['email'], 'Email'):
             break
+    else:
+        if STD['email']:
+            skipped.append('Email')
     # Phone
     for sel in ['input[type="tel"]', 'input[name*="phone" i]', 'input[id*="phone" i]', 'input[aria-label*="phone" i]']:
         if try_fill(sel, STD['phone'], 'Phone'):
             break
+    else:
+        if STD['phone']:
+            skipped.append('Phone')
     # LinkedIn
     for sel in ['input[name*="linkedin" i]', 'input[id*="linkedin" i]', 'input[aria-label*="linkedin" i]', 'input[placeholder*="linkedin" i]']:
         if try_fill(sel, STD['linkedin'], 'LinkedIn URL'):
             break
+    else:
+        if STD['linkedin']:
+            skipped.append('LinkedIn URL')
     # GitHub / Website
     for sel in ['input[name*="github" i]', 'input[id*="github" i]', 'input[aria-label*="github" i]', 'input[name*="website" i]', 'input[placeholder*="website" i]']:
         if try_fill(sel, STD['github'], 'GitHub/Website'):
             break
+    else:
+        if STD['github']:
+            skipped.append('GitHub/Website')
 
     # Resume upload
     try:
         file_inputs = page.locator('input[type="file"]')
+        uploaded = False
         for i in range(file_inputs.count()):
             inp = file_inputs.nth(i)
             try:
                 inp.set_input_files(str(CV), timeout=3000)
                 filled.append(f'Resume upload → {CV.name}')
+                uploaded = True
                 break
             except Exception:
                 pass
+        if not uploaded:
+            skipped.append('Resume upload')
     except Exception:
-        pass
+        skipped.append('Resume upload')
 
     return filled, skipped
 
