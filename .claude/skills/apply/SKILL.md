@@ -37,11 +37,13 @@ Read `config.yaml` → the `applicant:` block (name, email, phone, LinkedIn, Git
 grep -l '^status: To Apply' data/listings/*.md
 ```
 
-For each match, read frontmatter (`company`, `role`, `url`, `location`, `status`) and the body for any role-specific notes.
+For each match, read frontmatter (`company`, `role`, `url`, `location`, `status`, `keep_intent`) and the body for any role-specific notes.
 
 ### 3. Triage + prioritize
 
-**Company-history check FIRST:** for every To Apply candidate, before ranking, look up ALL listings for the same company (`grep -l "^company: <X>" data/listings/*.md`, then their statuses):
+**Reconsider-flagged check:** any candidate with `keep_intent: reconsider` (set by `/triage`'s "Reconsider later" action) was deliberately deferred rather than marked ready — present it in the queue with a 🔁 marker and a brief "flagged to reconsider — still want to apply?" instead of ranking it in as a plain Tier A/B/C candidate. Don't skip it automatically; let the user decide, same as the other flagged cases below.
+
+**Company-history check:** for every To Apply candidate, before ranking, look up ALL listings for the same company (`grep -l "^company: <X>" data/listings/*.md`, then their statuses):
 - Any `status: Rejected` at the company within ~2 months → recommend Passed for the new req (same recruiter, same ATS profile; a genuinely different level/team may justify an exception — surface it, let the user decide).
 - Any `status: Applied/Screen/Interviewing` at the company still unresolved → recommend HOLD (add a hold note in the body, keep To Apply); don't run concurrent applications at one company.
 - Companies in config `search.rejected_companies` → recommend Passed.

@@ -23,10 +23,8 @@ import json
 import sys
 from pathlib import Path
 
-import yaml
-
 sys.path.insert(0, str(Path(__file__).parent))
-from triage_server import DECLINE_LOG, DECLINE_LOG_HEADER, _read_decline_log
+from triage_server import _read_decline_log, _write_decline_log
 
 
 def main():
@@ -44,8 +42,7 @@ def main():
             if entry.get('id') in ids:
                 entry['suggested'] = True
                 marked += 1
-        DECLINE_LOG.parent.mkdir(parents=True, exist_ok=True)
-        DECLINE_LOG.write_text(DECLINE_LOG_HEADER + yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+        _write_decline_log(data)
         print(json.dumps({'marked': marked}))
         return
 

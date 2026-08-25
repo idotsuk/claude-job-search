@@ -115,6 +115,7 @@ class TriageServerTest(unittest.TestCase):
         text = path.read_text()
         self.assertIn('reviewed: 2026-08-25', text)
         self.assertIn('status: To Apply', text)
+        self.assertIn('keep_intent: apply', text)
 
     def test_apply_keep_reverts_a_prior_decline_in_the_same_session(self):
         """Regression: revisiting a declined card (via Prev/Next) and hitting
@@ -129,6 +130,18 @@ class TriageServerTest(unittest.TestCase):
 
         self.assertIn('status: To Apply', path.read_text())
 
+    def test_apply_keep_reconsider_tags_intent_and_leaves_status_to_apply(self):
+        path = self._write_listing('acme-backend')
+        import datetime
+
+        self.mod.apply_keep(path, datetime.date(2026, 8, 25), intent='reconsider')
+
+        text = path.read_text()
+        self.assertIn('status: To Apply', text)
+        self.assertIn('keep_intent: reconsider', text)
+        self.assertIn('reviewed: 2026-08-25', text)
+        self.assertIn('Marked to reconsider later', text)
+
     def test_apply_decline_sets_skipped_and_logs_reason(self):
         path = self._write_listing('acme-backend', blurb='needs Rust experience')
         import datetime
@@ -141,6 +154,44 @@ class TriageServerTest(unittest.TestCase):
         self.assertIn('reviewed: 2026-08-25', text)
         self.assertIn('Tech-stack gap', text)
         self.assertIn('no Rust experience', text)
+
+    def test_apply_keep_clears_stale_decline_reason(self):
+        """Regression: flipping a previously-declined listing back to Keep
+        must not leave a contradictory decline_reason behind."""
+        path = self._write_listing('acme-backend')
+        import datetime
+
+        self.mod.apply_decline(path, 'stack_gap', 'no Rust', datetime.date(2026, 8, 25))
+        self.assertIn('decline_reason: stack_gap', path.read_text())
+
+        self.mod.apply_keep(path, datetime.date(2026, 8, 25))
+        self.assertNotIn('decline_reason', path.read_text())
+
+    def test_apply_decline_clears_stale_keep_intent(self):
+        """Symmetric regression: flipping a previously-kept listing to
+        Decline must not leave a contradictory keep_intent behind."""
+        path = self._write_listing('acme-backend')
+        import datetime
+
+        self.mod.apply_keep(path, datetime.date(2026, 8, 25), intent='reconsider')
+        self.assertIn('keep_intent: reconsider', path.read_text())
+
+        self.mod.apply_decline(path, 'stack_gap', 'no Rust', datetime.date(2026, 8, 25))
+        self.assertNotIn('keep_intent', path.read_text())
+
+    def test_apply_decline_escapes_pipe_in_note(self):
+        """A literal `|` in a free-text note must not survive into the
+        Communications table row — it would split into an extra column and
+        corrupt every downstream naive `split('|')` parser."""
+        path = self._write_listing('acme-backend')
+        import datetime
+
+        self.mod.apply_decline(path, 'stack_gap', 'no Go | Rust experience', datetime.date(2026, 8, 25))
+
+        text = path.read_text()
+        comm_line = [ln for ln in text.splitlines() if 'Declined in triage' in ln][0]
+        self.assertEqual(comm_line.count('|'), 6)  # exactly the 5 table-cell delimiters
+        self.assertIn('no Go ｜ Rust experience', text)
 
     def test_decline_log_append_and_pop_round_trips(self):
         entry = {'id': 'aaa11111', 'date': '2026-08-25', 'file': 'acme-backend.md', 'company': 'Acme',
@@ -245,6 +296,186 @@ class TriageServerHttpTest(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self._post('/api/decide', {'file': 'does-not-exist.md', 'action': 'keep'})
         self.assertEqual(ctx.exception.code, 404)
+
+    def test_keep_defaults_to_apply_intent(self):
+        res = self._post('/api/decide', {'file': 'acme-backend.md', 'action': 'keep'})
+        self.assertTrue(res['ok'])
+        self.assertEqual(self.mod._session_counts['apply'], 1)
+        self.assertEqual(self.mod._session_counts['reconsider'], 0)
+        self.assertIn('keep_intent: apply', (self.listings_dir / 'acme-backend.md').read_text())
+
+    def test_keep_reconsider_then_undo_restores_file_and_counters(self):
+        res = self._post('/api/decide', {'file': 'acme-backend.md', 'action': 'keep', 'intent': 'reconsider'})
+        self.assertTrue(res['ok'])
+        self.assertEqual(self.mod._session_counts['reconsider'], 1)
+        text = (self.listings_dir / 'acme-backend.md').read_text()
+        self.assertIn('keep_intent: reconsider', text)
+        self.assertIn('status: To Apply', text)
+
+        undo_res = self._post('/api/undo', {})
+        self.assertTrue(undo_res['ok'])
+        self.assertEqual(self.mod._session_counts['reconsider'], 0)
+        self.assertNotIn('keep_intent', (self.listings_dir / 'acme-backend.md').read_text())
+
+    def test_keep_with_unknown_intent_returns_400(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self._post('/api/decide', {'file': 'acme-backend.md', 'action': 'keep', 'intent': 'bogus'})
+        self.assertEqual(ctx.exception.code, 400)
+
+    def test_redeciding_same_kind_does_not_double_count(self):
+        """Regression: revisiting a card via Prev/Next and re-clicking the
+        same outcome must not inflate the session tally."""
+        self._post('/api/decide', {'file': 'acme-backend.md', 'action': 'keep', 'intent': 'apply'})
+        self._post('/api/decide', {'file': 'acme-backend.md', 'action': 'keep', 'intent': 'apply'})
+        self.assertEqual(self.mod._session_counts['apply'], 1)
+
+    def test_changing_bucket_nets_counts_instead_of_double_counting(self):
+        """A listing moved from one bucket to another (Change status, or a
+        Prev/Next re-decide) should still count as one listing, not two."""
+        self._post('/api/decide', {'file': 'acme-backend.md', 'action': 'keep', 'intent': 'apply'})
+        self._post('/api/decide', {'file': 'acme-backend.md', 'action': 'keep', 'intent': 'reconsider'})
+        self.assertEqual(self.mod._session_counts['apply'], 0)
+        self.assertEqual(self.mod._session_counts['reconsider'], 1)
+
+    def test_revert_restores_pristine_file_removes_log_entry_and_count(self):
+        original = (self.listings_dir / 'acme-backend.md').read_text()
+
+        res = self._post('/api/decide', {
+            'file': 'acme-backend.md', 'action': 'decline', 'reason': 'stack_gap',
+            'note': 'no Rust', 'company': 'Acme', 'role': 'Backend Engineer',
+        })
+        self.assertTrue(res['ok'])
+        self.assertEqual(len(self.mod._read_decline_log()['declines']), 1)
+
+        revert_res = self._post('/api/revert', {'file': 'acme-backend.md'})
+        self.assertTrue(revert_res['ok'])
+        self.assertEqual((self.listings_dir / 'acme-backend.md').read_text(), original)
+        self.assertEqual(self.mod._read_decline_log()['declines'], [])
+        self.assertEqual(self.mod._session_counts['declined'], 0)
+
+    def test_revert_on_undecided_file_returns_400(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self._post('/api/revert', {'file': 'acme-backend.md'})
+        self.assertEqual(ctx.exception.code, 400)
+
+    def test_redeclining_replaces_decline_log_entry_instead_of_stacking(self):
+        """A file declined twice in a row (revisited and re-declined with a
+        different reason, without ever being Kept in between) must leave one
+        decline-log entry reflecting the final call — not two — so
+        job-search step 0b sees one decline per listing, not an inflated
+        repeat count. Revert then clears that single entry."""
+        self._post('/api/decide', {
+            'file': 'acme-backend.md', 'action': 'decline', 'reason': 'stack_gap',
+            'note': 'no Rust', 'company': 'Acme', 'role': 'Backend Engineer',
+        })
+        self._post('/api/decide', {
+            'file': 'acme-backend.md', 'action': 'decline', 'reason': 'other',
+            'note': 'changed my mind', 'company': 'Acme', 'role': 'Backend Engineer',
+        })
+        declines = self.mod._read_decline_log()['declines']
+        self.assertEqual(len(declines), 1)
+        self.assertEqual(declines[0]['reason'], 'other')
+        self.assertEqual(self.mod._session_counts['declined'], 1)
+
+        self._post('/api/revert', {'file': 'acme-backend.md'})
+        self.assertEqual(self.mod._read_decline_log()['declines'], [])
+        self.assertEqual(self.mod._session_counts['declined'], 0)
+
+    def test_redeclining_does_not_stack_communications_rows(self):
+        """Each re-decide rewrites the single triage Communications row
+        rather than appending another — the audit trail shows the final
+        decision once."""
+        path = self.listings_dir / 'acme-backend.md'
+        self._post('/api/decide', {
+            'file': 'acme-backend.md', 'action': 'decline', 'reason': 'stack_gap',
+            'note': 'no Rust', 'company': 'Acme', 'role': 'Backend Engineer',
+        })
+        self._post('/api/decide', {
+            'file': 'acme-backend.md', 'action': 'decline', 'reason': 'other',
+            'note': 'changed my mind', 'company': 'Acme', 'role': 'Backend Engineer',
+        })
+        triage_rows = [ln for ln in path.read_text().splitlines() if '(triage)' in ln]
+        self.assertEqual(len(triage_rows), 1)
+        self.assertIn('changed my mind', triage_rows[0])
+        self.assertNotIn('no Rust', path.read_text())
+
+    def test_flip_to_apply_drops_the_prior_decline_communications_row(self):
+        """Decline -> Apply must not leave a 'Declined in triage' row under a
+        listing that's now status: To Apply."""
+        path = self.listings_dir / 'acme-backend.md'
+        self._post('/api/decide', {
+            'file': 'acme-backend.md', 'action': 'decline', 'reason': 'stack_gap',
+            'note': 'no Rust', 'company': 'Acme', 'role': 'Backend Engineer',
+        })
+        self._post('/api/decide', {'file': 'acme-backend.md', 'action': 'keep', 'intent': 'apply'})
+        text = path.read_text()
+        self.assertNotIn('(triage)', text)
+        self.assertNotIn('Declined in triage', text)
+        self.assertIn('status: To Apply', text)
+
+    def test_decide_with_unknown_reason_returns_400(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self._post('/api/decide', {
+                'file': 'acme-backend.md', 'action': 'decline', 'reason': 'bogus',
+                'company': 'Acme', 'role': 'Backend Engineer',
+            })
+        self.assertEqual(ctx.exception.code, 400)
+        self.assertEqual(self.mod._read_decline_log()['declines'], [])
+        self.assertIn('status: To Apply', (self.listings_dir / 'acme-backend.md').read_text())
+
+    def test_undo_preserves_a_communications_row_added_after_the_decision(self):
+        """Regression: undo/revert restore the touched frontmatter fields
+        surgically, not by overwriting the whole file — so a Communications
+        row appended (by a Gmail/WhatsApp sync, or by hand) between the
+        decision and the undo is not silently discarded."""
+        path = self.listings_dir / 'acme-backend.md'
+        self._post('/api/decide', {
+            'file': 'acme-backend.md', 'action': 'decline', 'reason': 'stack_gap',
+            'note': 'no Rust', 'company': 'Acme', 'role': 'Backend Engineer',
+        })
+        # Simulate an external edit landing while the review session is open.
+        external_row = '| 2026-08-26 | email | in | recruiter@example.com | Follow-up from recruiter |'
+        path.write_text(self.mod.append_comm_row(path.read_text(), external_row))
+
+        undo_res = self._post('/api/undo', {})
+        self.assertTrue(undo_res['ok'])
+        text = path.read_text()
+        self.assertIn(external_row, text)          # external edit survived
+        self.assertIn('status: To Apply', text)    # decision was still undone
+        self.assertNotIn('decline_reason', text)
+        self.assertNotIn('Declined in triage', text)
+
+    def test_keeping_a_declined_listing_removes_its_decline_log_entry(self):
+        """Regression: re-deciding Declined -> Apply/Reconsider must clean
+        up the stale decline-log entry immediately, not just when Removed
+        via the Review panel — otherwise job-search step 0b would still
+        suggest blocklisting a company the user just decided to apply to."""
+        self._post('/api/decide', {
+            'file': 'acme-backend.md', 'action': 'decline', 'reason': 'company_fit',
+            'note': '', 'company': 'Acme', 'role': 'Backend Engineer',
+        })
+        self.assertEqual(len(self.mod._read_decline_log()['declines']), 1)
+
+        res = self._post('/api/decide', {'file': 'acme-backend.md', 'action': 'keep', 'intent': 'apply'})
+        self.assertTrue(res['ok'])
+        self.assertEqual(self.mod._read_decline_log()['declines'], [])
+        self.assertEqual(self.mod._session_counts['declined'], 0)
+        self.assertEqual(self.mod._session_counts['apply'], 1)
+
+    def test_undo_after_keeping_a_declined_listing_restores_its_decline_log_entry(self):
+        self._post('/api/decide', {
+            'file': 'acme-backend.md', 'action': 'decline', 'reason': 'company_fit',
+            'note': '', 'company': 'Acme', 'role': 'Backend Engineer',
+        })
+        self._post('/api/decide', {'file': 'acme-backend.md', 'action': 'keep', 'intent': 'apply'})
+        self.assertEqual(self.mod._read_decline_log()['declines'], [])
+
+        undo_res = self._post('/api/undo', {})
+        self.assertTrue(undo_res['ok'])
+        self.assertEqual(len(self.mod._read_decline_log()['declines']), 1)
+        self.assertEqual(self.mod._session_counts['declined'], 1)
+        self.assertEqual(self.mod._session_counts['apply'], 0)
+        self.assertIn('status: Skipped', (self.listings_dir / 'acme-backend.md').read_text())
 
 
 if __name__ == '__main__':

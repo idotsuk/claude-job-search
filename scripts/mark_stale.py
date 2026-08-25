@@ -105,6 +105,14 @@ def set_status(text, new_status):
     return re.sub(r'^status:\s*.*$', f'status: {new_status}', text, count=1, flags=re.M)
 
 
+def remove_field(text, field):
+    """Drop a frontmatter field entirely, if present — the delete-side
+    counterpart to upsert_field, for callers that flip a listing between
+    mutually exclusive states (e.g. /triage's decline_reason vs keep_intent)
+    and need to clear whichever field the *other* state left behind."""
+    return re.sub(rf'^{re.escape(field)}:.*\n', '', text, count=1, flags=re.M)
+
+
 def append_comm_row(text, row):
     """Append a row to the ## Communications table if one exists; else
     add the section + header + row at the end of the file."""
@@ -121,6 +129,15 @@ def append_comm_row(text, row):
         '|------|---------|-----------|---------|---------|\n'
         f'{row}\n'
     )
+
+
+def remove_comm_row(text, row):
+    """Drop one Communications row previously added by append_comm_row —
+    exact whole-line match on `row`, so a row edited or added by anything
+    else is left untouched. Used by /triage to rewrite the single triage
+    row when a listing is re-decided or a decision is undone, instead of
+    letting each pass stack another row."""
+    return text.replace(row + '\n', '', 1)
 
 
 def process_file(path, today, threshold_days, dry_run=False):

@@ -3,10 +3,12 @@
 Interactive one-at-a-time review for the `To Apply` queue.
 
 Serves a local card UI at http://localhost:{port}/ : Keep leaves the listing
-queued (stamps `reviewed:`); Decline picks a reason and demotes the listing
-to `status: Skipped`, writing `decline_reason:` and a Communications row —
-same surgical-frontmatter-edit approach as mark_stale.py, reused directly
-from there rather than re-implemented.
+queued (stamps `reviewed:`) with a `keep_intent` of either `apply` (ready
+now) or `reconsider` (still queued, but flagged for a second look before
+/apply works it — see apply/SKILL.md step 2); Decline picks a reason and
+demotes the listing to `status: Skipped`, writing `decline_reason:` and a
+Communications row — same surgical-frontmatter-edit approach as
+mark_stale.py, reused directly from there rather than re-implemented.
 
 Every decision also appends a structured entry (with a stable `id`) to
 data/decline-log.yaml so a future /job-search run can spot repeat patterns
@@ -35,7 +37,10 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 import lib
-from mark_stale import upsert_field, set_status, append_comm_row, split_frontmatter
+from mark_stale import (
+    upsert_field, remove_field, set_status, append_comm_row, remove_comm_row,
+    parse_field, split_frontmatter,
+)
 
 LISTINGS_DIR = lib.data_root() / 'listings'
 DECLINE_LOG = lib.data_root() / 'decline-log.yaml'
@@ -61,9 +66,66 @@ DECLINE_LOG_HEADER = (
 # local, single-viewer review session. Not persisted across server restarts.
 _last_action = None
 
+# Per-file session bookkeeping, keyed by listing filename:
+#   fields_pristine   snapshot of TRIAGE_FIELDS the *first* time the file is
+#                     decided this session — what a full Remove/revert puts
+#                     back (surgically, per-field), so an edit made to the
+#                     file from outside meanwhile survives the revert.
+#   kind              current bucket: 'apply' / 'reconsider' / 'declined' / None
+#   decline_log_ids   every decline-log id this file has produced and not yet
+#                     had cleaned up this session (at most one after a
+#                     re-decline — a fresh decline replaces the prior entry).
+#   comm_rows         the exact Communications row string(s) this session's
+#                     current decision added, so a re-decide can remove them
+#                     before writing the new one instead of stacking.
+_session_state = {}
+
+# Frontmatter fields the decide path writes. Snapshotted before a listing's
+# first decision so /api/undo and /api/revert can restore them one at a time
+# (to the snapshotted value, or absent) rather than overwriting the whole
+# file — which would silently discard anything appended to it (a Gmail/
+# WhatsApp Communications row, a manual edit) between the decision and the
+# undo. Matches the repo-wide "frontmatter is edited surgically" invariant.
+TRIAGE_FIELDS = ('status', 'reviewed', 'keep_intent', 'decline_reason')
+
+
+def snapshot_fields(text):
+    fm_raw, _, _ = split_frontmatter(text)
+    if fm_raw is None:
+        return {f: None for f in TRIAGE_FIELDS}
+    return {f: parse_field(fm_raw, f) for f in TRIAGE_FIELDS}
+
+
+def restore_fields(text, snap):
+    """Put each TRIAGE_FIELDS entry back to its snapshotted value, or remove
+    it if it was absent when snapshotted. Per-field regex edits — every
+    other frontmatter key and the whole body are left as-is."""
+    for field, value in snap.items():
+        if value is None:
+            text = remove_field(text, field)
+        elif field == 'status':
+            text = set_status(text, value)
+        else:
+            text = upsert_field(text, field, value)
+    return text
+
 # Session-only tally, printed when the server stops — the skill relays this
 # back to the user without re-scanning the listings tree.
-_session_counts = {'kept': 0, 'declined': 0}
+_session_counts = {'apply': 0, 'reconsider': 0, 'declined': 0}
+
+
+def _adjust_counts(new_kind, old_kind):
+    """Net a bucket transition into _session_counts — the one place this
+    arithmetic happens, so /api/decide, /api/undo, and /api/revert (which
+    each move a listing between buckets, including to/from no bucket at
+    all) can't drift out of sync with each other. A no-op when the kind
+    doesn't actually change (e.g. re-clicking the same outcome)."""
+    if new_kind == old_kind:
+        return
+    if new_kind is not None:
+        _session_counts[new_kind] += 1
+    if old_kind is not None:
+        _session_counts[old_kind] -= 1
 
 
 def load_queue():
@@ -102,25 +164,72 @@ def load_queue():
     return items
 
 
-def apply_keep(path, today):
+def _table_cell(text):
+    """Sanitize free text for embedding in a `|`-delimited Communications
+    table cell. A literal `|` would otherwise split into an extra column
+    when re-split downstream (generate_run_report.py's parse_comms_rows
+    does a naive line.split('|')), silently truncating everything after
+    it; a newline would break the one-row-per-line table structure the
+    same way. Swap the pipe for a visually identical full-width character
+    rather than stripping it, so the user's text isn't silently altered."""
+    return text.replace('|', '｜').replace('\n', ' ').strip()
+
+
+def apply_keep(path, today, intent='apply'):
     """Stamp reviewed + ensure status is To Apply — the latter matters when
     Keep is applied to a card that was Declined earlier in the same session
-    (revisited via Prev/Next) and needs to flip back from Skipped."""
+    (revisited via Prev/Next) and needs to flip back from Skipped.
+
+    `intent` is 'apply' (ready to work now) or 'reconsider' (still queued,
+    but flagged for a second look — see apply/SKILL.md step 2). Both leave
+    status: To Apply; only the keep_intent field differs. A reconsider also
+    gets a Communications row, same as a decline, since it's a decision
+    worth an audit trail — a plain apply-keep stays silent as before.
+
+    Also clears a stale `decline_reason` left over from an earlier decline
+    of this same listing (revisited this session or a prior one) — leaving
+    it in place alongside `status: To Apply` would read as an unresolved
+    tech-stack gap that no longer applies.
+
+    Returns the Communications row it appended (reconsider only), or None,
+    so the caller can strip it again on a later re-decide / undo."""
     text = path.read_text()
     text = set_status(text, 'To Apply')
     text = upsert_field(text, 'reviewed', today.isoformat())
+    text = upsert_field(text, 'keep_intent', intent)
+    text = remove_field(text, 'decline_reason')
+    row = None
+    if intent == 'reconsider':
+        row = f'| {today.isoformat()} | — | — | (triage) | Marked to reconsider later |'
+        text = append_comm_row(text, row)
     path.write_text(text)
+    return row
 
 
 def apply_decline(path, reason_key, note, today):
+    """Symmetric to apply_keep: also clears a stale `keep_intent` left over
+    from an earlier Apply/Reconsider of this listing, so a declined listing
+    never carries a contradictory 'still worth reconsidering' flag.
+
+    Returns the Communications row it appended, so the caller can strip it
+    again on a later re-decide / undo instead of leaving it stacked."""
     label = DECLINE_LABELS.get(reason_key, 'Other')
     text = path.read_text()
     text = set_status(text, 'Skipped')
     text = upsert_field(text, 'decline_reason', reason_key or 'other')
     text = upsert_field(text, 'reviewed', today.isoformat())
+    text = remove_field(text, 'keep_intent')
+    note = _table_cell(note) if note else note
     summary = f'Declined in triage: {label}' + (f' — {note}' if note else '')
-    text = append_comm_row(text, f'| {today.isoformat()} | — | — | (triage) | {summary} |')
+    row = f'| {today.isoformat()} | — | — | (triage) | {summary} |'
+    text = append_comm_row(text, row)
     path.write_text(text)
+    return row
+
+
+def _write_decline_log(data):
+    DECLINE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    DECLINE_LOG.write_text(DECLINE_LOG_HEADER + yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
 
 
 def _read_decline_log():
@@ -138,15 +247,14 @@ def _read_decline_log():
             entry['id'] = uuid.uuid4().hex[:8]
             backfilled = True
     if backfilled:
-        DECLINE_LOG.write_text(DECLINE_LOG_HEADER + yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+        _write_decline_log(data)
     return data
 
 
 def append_decline_log(entry):
-    DECLINE_LOG.parent.mkdir(parents=True, exist_ok=True)
     data = _read_decline_log()
     data['declines'].append(entry)
-    DECLINE_LOG.write_text(DECLINE_LOG_HEADER + yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    _write_decline_log(data)
 
 
 def pop_decline_log():
@@ -157,8 +265,22 @@ def pop_decline_log():
     if not data['declines']:
         return None
     entry = data['declines'].pop()
-    DECLINE_LOG.write_text(DECLINE_LOG_HEADER + yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    _write_decline_log(data)
     return entry
+
+
+def remove_decline_log_entries(ids):
+    """Remove every decline-log entry whose id is in `ids` (a listing can
+    accumulate more than one this session if declined, revisited, and
+    declined again) — used when a listing is reverted or re-decided away
+    from Decline, so a suggestion tied to an abandoned decline doesn't
+    linger. No-op if `ids` is empty, to avoid a pointless read/write."""
+    if not ids:
+        return
+    ids = set(ids)
+    data = _read_decline_log()
+    data['declines'] = [e for e in data['declines'] if e.get('id') not in ids]
+    _write_decline_log(data)
 
 
 def resolve_listing(file_name):
@@ -231,18 +353,71 @@ class TriageHandler(BaseHTTPRequestHandler):
                 self._json({'ok': False, 'error': 'unknown listing'}, 404)
                 return
             action = payload.get('action')
+            if action not in ('keep', 'decline'):
+                self._json({'ok': False, 'error': 'unknown action'}, 400)
+                return
+            intent = payload.get('intent') or 'apply'
+            if action == 'keep' and intent not in ('apply', 'reconsider'):
+                self._json({'ok': False, 'error': 'unknown intent'}, 400)
+                return
+            reason = payload.get('reason') or 'other'
+            if action == 'decline' and reason not in DECLINE_LABELS:
+                # Symmetric to the `intent` check above: an unrecognized
+                # reason would be persisted to frontmatter and the decline
+                # log where job-search step 0b can't categorize it, so it
+                # would silently never produce a suggestion and never get
+                # marked `suggested` — re-read every run.
+                self._json({'ok': False, 'error': 'unknown reason'}, 400)
+                return
+            note = str(payload.get('note') or '').strip()
             today = datetime.date.today()
+
             prev_text = target.read_text()
+            state = _session_state.get(target.name)
+            if state is None:
+                state = {'fields_pristine': snapshot_fields(prev_text), 'kind': None,
+                         'decline_log_ids': [], 'comm_rows': []}
+                _session_state[target.name] = state
+            prev_kind = state['kind']
+            # Snapshot the fields *this* decision is about to overwrite, for a
+            # single-step Undo that restores them without touching anything
+            # else in the file.
+            fields_before = snapshot_fields(prev_text)
+
+            # Re-deciding a file already decided this session: strip the
+            # Communications row(s) the earlier decision wrote (exact match,
+            # so a row added from outside meanwhile is left alone) before the
+            # new decision writes its own — otherwise each pass stacks another
+            # "Declined in triage" / "Marked to reconsider later" row.
+            removed_comm_rows = list(state['comm_rows'])
+            if removed_comm_rows:
+                text = target.read_text()
+                for row in removed_comm_rows:
+                    text = remove_comm_row(text, row)
+                target.write_text(text)
+            state['comm_rows'] = []
+
+            # A re-decide away from (or from one Decline to another) also
+            # supersedes the decline-log entries the file produced earlier
+            # this session — job-search step 0b should see one decline per
+            # listing reflecting the final call, not a stack. Snapshot them
+            # so Undo can put them back.
+            removed_decline_entries = []
+            if state['decline_log_ids']:
+                removed_ids = set(state['decline_log_ids'])
+                removed_decline_entries = [e for e in _read_decline_log()['declines'] if e.get('id') in removed_ids]
+                remove_decline_log_entries(state['decline_log_ids'])
+                state['decline_log_ids'] = []
+
             if action == 'keep':
-                apply_keep(target, today)
+                added_row = apply_keep(target, today, intent)
                 logged = False
-                _session_counts['kept'] += 1
-            elif action == 'decline':
-                reason = payload.get('reason') or 'other'
-                note = str(payload.get('note') or '').strip()
-                apply_decline(target, reason, note, today)
+                kind = intent
+            else:
+                added_row = apply_decline(target, reason, note, today)
+                entry_id = uuid.uuid4().hex[:8]
                 append_decline_log({
-                    'id': uuid.uuid4().hex[:8],
+                    'id': entry_id,
                     'date': today.isoformat(),
                     'file': target.name,
                     'company': str(payload.get('company', '')),
@@ -250,12 +425,24 @@ class TriageHandler(BaseHTTPRequestHandler):
                     'reason': reason,
                     'note': note,
                 })
+                state['decline_log_ids'].append(entry_id)
                 logged = True
-                _session_counts['declined'] += 1
-            else:
-                self._json({'ok': False, 'error': 'unknown action'}, 400)
-                return
-            _last_action = {'file': target.name, 'prev_text': prev_text, 'logged': logged, 'action': action}
+                kind = 'declined'
+
+            if added_row:
+                state['comm_rows'].append(added_row)
+            # Re-deciding a file already decided this session (via Prev/Next,
+            # or Change status in the Review panel) is a bucket *transition*,
+            # not a fresh addition — net the counts so a listing moved from
+            # one bucket to another is still counted once, not twice.
+            _adjust_counts(kind, prev_kind)
+            state['kind'] = kind
+            _last_action = {
+                'file': target.name, 'fields_before': fields_before,
+                'added_comm_row': added_row, 'removed_comm_rows': removed_comm_rows,
+                'logged': logged, 'kind': kind, 'prev_kind': prev_kind,
+                'removed_decline_entries': removed_decline_entries,
+            }
             self._json({'ok': True})
             return
 
@@ -264,13 +451,52 @@ class TriageHandler(BaseHTTPRequestHandler):
                 self._json({'ok': False, 'error': 'nothing to undo'}, 400)
                 return
             target = LISTINGS_DIR / _last_action['file']
-            target.write_text(_last_action['prev_text'])
+            text = target.read_text()
+            if _last_action['added_comm_row']:
+                text = remove_comm_row(text, _last_action['added_comm_row'])
+            for row in _last_action['removed_comm_rows']:
+                text = append_comm_row(text, row)
+            text = restore_fields(text, _last_action['fields_before'])
+            target.write_text(text)
+            state = _session_state.get(_last_action['file'])
+            if state is not None:
+                state['comm_rows'] = list(_last_action['removed_comm_rows'])
             if _last_action['logged']:
-                pop_decline_log()
-            _session_counts['kept' if _last_action['action'] == 'keep' else 'declined'] -= 1
+                popped = pop_decline_log()
+                if state and popped and state['decline_log_ids'] and state['decline_log_ids'][-1] == popped.get('id'):
+                    state['decline_log_ids'].pop()
+            for entry in _last_action['removed_decline_entries']:
+                append_decline_log(entry)
+                if state is not None:
+                    state['decline_log_ids'].append(entry['id'])
+            _adjust_counts(_last_action['prev_kind'], _last_action['kind'])
+            if state:
+                state['kind'] = _last_action['prev_kind']
             restored = _last_action['file']
             _last_action = None
             self._json({'ok': True, 'file': restored})
+            return
+
+        if path == '/api/revert':
+            target = resolve_listing(payload.get('file', ''))
+            if target is None:
+                self._json({'ok': False, 'error': 'unknown listing'}, 404)
+                return
+            state = _session_state.get(target.name)
+            if state is None or state['kind'] is None:
+                self._json({'ok': False, 'error': 'nothing to revert'}, 400)
+                return
+            text = target.read_text()
+            for row in state['comm_rows']:
+                text = remove_comm_row(text, row)
+            text = restore_fields(text, state['fields_pristine'])
+            target.write_text(text)
+            remove_decline_log_entries(state['decline_log_ids'])
+            _adjust_counts(None, state['kind'])
+            if _last_action is not None and _last_action['file'] == target.name:
+                _last_action = None
+            del _session_state[target.name]
+            self._json({'ok': True, 'file': target.name})
             return
 
         if path == '/api/finish':
@@ -298,7 +524,8 @@ PAGE_TEMPLATE = """<!doctype html>
   .card h2 { margin: 0 0 2px; color: #1a3a5c; font-size: 22px; }
   .card .role { font-size: 16px; color: #333; margin-bottom: 10px; }
   .badge { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; margin-bottom: 14px; }
-  .badge-keep { background: #e8f5e9; color: #2e7d32; }
+  .badge-apply { background: #e8f5e9; color: #2e7d32; }
+  .badge-reconsider { background: #fff6e0; color: #8a6100; }
   .badge-decline { background: #fdeceb; color: #c62828; }
   .chips { margin-bottom: 14px; }
   .chip { display: inline-block; padding: 2px 10px; border-radius: 12px; background: #dde6f0;
@@ -311,6 +538,8 @@ PAGE_TEMPLATE = """<!doctype html>
   button:disabled { opacity: .35; cursor: default; }
   .btn-decline { background: #fdeceb; color: #c62828; flex: 1; }
   .btn-decline:hover { background: #fadedb; }
+  .btn-reconsider { background: #fff6e0; color: #8a6100; flex: 1; }
+  .btn-reconsider:hover { background: #fbecc4; }
   .btn-keep { background: #e8f5e9; color: #2e7d32; flex: 1; }
   .btn-keep:hover { background: #d7edd9; }
   .btn-nav { background: #eef2f7; color: #1a3a5c; padding: 6px 12px; font-size: 13px; font-weight: 600; }
@@ -319,6 +548,30 @@ PAGE_TEMPLATE = """<!doctype html>
   .btn-undo { background: none; color: #777; font-weight: 500; padding: 6px 10px; }
   .btn-undo:hover { color: #1565c0; }
   .btn-undo:disabled:hover { color: #777; }
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(20, 30, 45, .45);
+                    align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 10; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #fff; border-radius: 10px; padding: 24px 28px; max-width: 640px; width: 100%;
+           max-height: 85vh; overflow-y: auto; }
+  .modal h2 { margin: 0 0 4px; color: #1a3a5c; font-size: 20px; display: flex; justify-content: space-between; align-items: center; }
+  .modal .btn-close { background: none; color: #999; font-size: 20px; padding: 2px 8px; }
+  .modal .empty-note { color: #999; font-size: 14px; margin: 20px 0; }
+  .review-section { margin-top: 18px; }
+  .review-section h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .03em; }
+  .review-section.apply h3 { color: #2e7d32; }
+  .review-section.reconsider h3 { color: #8a6100; }
+  .review-section.declined h3 { color: #c62828; }
+  .review-row { padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+  .review-row:last-child { border-bottom: none; }
+  .review-row .rr-title { font-weight: 600; color: #222; }
+  .review-row .rr-link { font-weight: 500; color: #1565c0; font-size: 12px; text-decoration: none; }
+  .review-row .rr-link:hover { text-decoration: underline; }
+  .review-row .rr-detail { color: #777; font-size: 12px; margin-top: 2px; }
+  .rr-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .rr-btn { background: #eef2f7; color: #1a3a5c; font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 12px; }
+  .rr-btn:hover { background: #dde6f0; }
+  .rr-btn.rr-remove { background: none; color: #999; margin-left: auto; }
+  .rr-btn.rr-remove:hover { color: #c62828; }
   .reasons { display: none; margin-top: 18px; border-top: 1px solid #eee; padding-top: 18px; }
   .reasons.open { display: block; }
   .reason-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
@@ -350,6 +603,8 @@ PAGE_TEMPLATE = """<!doctype html>
     <button class="btn-nav" id="prev-btn" onclick="prev()">‹ Prev</button>
     <span id="progress-label"></span>
     <button class="btn-nav" id="next-btn" onclick="next()">Next ›</button>
+    <button class="btn-undo" id="undo-btn" onclick="undo()" disabled>Undo</button>
+    <button class="btn-nav" onclick="openReview()">Review (V)</button>
     <button class="btn-nav btn-finish-header" onclick="finish()">Finish for now</button>
   </span>
 </h1>
@@ -357,15 +612,23 @@ PAGE_TEMPLATE = """<!doctype html>
 
 <div id="stage"></div>
 <div class="toast" id="toast"></div>
+<div class="modal-overlay" id="review-overlay" onclick="if (event.target === this) closeReview();">
+  <div class="modal">
+    <h2>Session so far <button class="btn-close" onclick="closeReview()">&times;</button></h2>
+    <div id="review-body"></div>
+  </div>
+</div>
 
 <script>
 const queue = __QUEUE_JSON__;
 const reasons = __REASONS_JSON__;
 let idx = 0;
-const decisions = {};      // file -> { type: 'keep'|'decline', reason, note }
+const decisions = {};      // file -> { type: 'apply'|'reconsider'|'decline', reason, note }
 let lastDecidedFile = null; // enables one-level Undo, matches server-side _last_action
+let lastDecidedPrevValue = null; // decisions[lastDecidedFile] before that change, so Undo restores a re-decide correctly instead of just deleting it
 let pickerOpen = false;
 let selectedReason = null; // reason picked in the open picker, pending confirmation
+let reviewOpen = false;
 
 const stage = document.getElementById('stage');
 const bar = document.getElementById('progress-bar');
@@ -409,11 +672,41 @@ async function post(path, body) {
   return res.json();
 }
 
+// Guards every server-mutating action (decide/undo/revert) against
+// overlapping calls — without this, OS key-repeat holding K/R/D, or a fast
+// double-click, fires a second request before the first's response lands,
+// and both would act on the same queue[idx] (or the same file). Also
+// centralizes error handling: fetch/JSON failures no longer leave the caller
+// awaiting forever, and a non-ok response is surfaced instead of silently
+// treated as success.
+let inFlight = false;
+
+async function postGuarded(path, body) {
+  if (inFlight) return null;
+  inFlight = true;
+  try {
+    const res = await post(path, body);
+    if (!res.ok) toast(res.error || 'Could not save — try again');
+    return res;
+  } catch (e) {
+    toast('Could not reach the server — try again');
+    return null;
+  } finally {
+    inFlight = false;
+  }
+}
+
+function syncUndoButton() {
+  const btn = document.getElementById('undo-btn');
+  if (btn) btn.disabled = !lastDecidedFile;
+}
+
 function render() {
   label.textContent = queue.length ? `${Math.min(idx, queue.length - 1) + 1} / ${queue.length}` : '';
   bar.style.width = queue.length ? `${(Math.min(idx, queue.length) / queue.length) * 100}%` : '0%';
   prevBtn.disabled = idx <= 0;
   nextBtn.disabled = idx >= queue.length;
+  syncUndoButton();
   pickerOpen = false;
   if (idx >= queue.length) {
     renderDone();
@@ -423,8 +716,10 @@ function render() {
   const decided = decisions[item.file];
   let badge = '';
   if (decided) {
-    if (decided.type === 'keep') {
-      badge = `<div class="badge badge-keep">✓ Kept</div>`;
+    if (decided.type === 'apply') {
+      badge = `<div class="badge badge-apply">✓ To Apply</div>`;
+    } else if (decided.type === 'reconsider') {
+      badge = `<div class="badge badge-reconsider">⏳ Reconsider later</div>`;
     } else {
       const label = (reasons.find(r => r[0] === decided.reason) || [null, 'Other'])[1];
       badge = `<div class="badge badge-decline">✗ Declined — ${esc(label)}${decided.note ? ': ' + esc(decided.note) : ''}</div>`;
@@ -445,36 +740,136 @@ function render() {
       ${link}
       <div class="actions">
         <button class="btn-decline" onclick="openPicker()">Decline</button>
-        <button class="btn-keep" onclick="keep()">Keep</button>
+        <button class="btn-reconsider" onclick="keep('reconsider')">Reconsider later</button>
+        <button class="btn-keep" onclick="keep('apply')">Apply</button>
       </div>
       <div class="reasons" id="reasons">
         <div class="reason-grid">${reasonButtons}</div>
-        <input class="note-input" id="note" placeholder="Add a note — what's the gap, or why it's not a fit">
+        <input class="note-input" id="note" oninput="updateConfirmState()" placeholder="Add a note — what's the gap, or why it's not a fit">
         <div class="reason-actions">
           <button class="btn-confirm-decline" id="confirm-decline-btn" onclick="confirmSelected()" disabled>Confirm decline</button>
           <button class="btn-cancel" onclick="closePicker()">Cancel (Esc)</button>
         </div>
       </div>
-      <div class="hint">← / → prev / next · K keep · D decline · 1–4 pick a reason once open, Enter confirms · U undo · F finish for now · Esc cancel</div>
+      <div class="hint">← / → prev / next · K apply · R reconsider · D decline · 1–4 pick a reason once open, Enter confirms · U undo · V review · F finish for now · Esc cancel</div>
     </div>`;
 }
 
+// Buckets every decision made so far into { apply, reconsider, declined },
+// each entry carrying the item's company/role plus any decline reason/note,
+// for reuse by both the Review panel and the Finish/done screens.
+function groupDecisions() {
+  const groups = { apply: [], reconsider: [], declined: [] };
+  for (const item of queue) {
+    const d = decisions[item.file];
+    if (!d) continue;
+    const row = { file: item.file, company: item.company, role: item.role, url: item.url, reason: d.reason, note: d.note };
+    if (d.type === 'apply') groups.apply.push(row);
+    else if (d.type === 'reconsider') groups.reconsider.push(row);
+    else groups.declined.push(row);
+  }
+  return groups;
+}
+
+const KIND_LABELS = { apply: 'Apply', reconsider: 'Reconsider', declined: 'Decline' };
+
+// `interactive` gates the per-row Remove/Change-status controls: they only
+// make sense while the server is still alive to act on them (Review panel,
+// opened any time before Finish). The Finish screen renders this same
+// function with interactive=false — by the time it's on screen the server
+// has already been told to shut down, so there's nothing left to write to.
+function renderGroupedSummary(groups, interactive) {
+  const sections = [
+    ['apply', 'To apply', groups.apply],
+    ['reconsider', 'Reconsider later', groups.reconsider],
+    ['declined', 'Declined', groups.declined],
+  ];
+  const total = groups.apply.length + groups.reconsider.length + groups.declined.length;
+  if (!total) return '<p class="empty-note">Nothing decided yet this session.</p>';
+  return sections.map(([cls, title, rows]) => {
+    if (!rows.length) return '';
+    const items = rows.map(r => {
+      const label = r.reason ? (reasons.find(x => x[0] === r.reason) || [null, 'Other'])[1] : '';
+      const detail = [label, r.note].filter(Boolean).join(' — ');
+      const rUrl = safeUrl(r.url);
+      const link = rUrl ? ` <a class="rr-link" href="${esc(rUrl)}" target="_blank" rel="noopener">Open ↗</a>` : '';
+      let actions = '';
+      if (interactive) {
+        const moves = ['apply', 'reconsider', 'declined'].filter(k => k !== cls)
+          .map(k => `<button class="rr-btn" data-action="move" data-file="${esc(r.file)}" data-kind="${k}">→ ${KIND_LABELS[k]}</button>`).join('');
+        actions = `<div class="rr-actions">${moves}<button class="rr-btn rr-remove" data-action="remove" data-file="${esc(r.file)}">Remove</button></div>`;
+      }
+      return `<div class="review-row"><div class="rr-title">${esc(r.company)} — ${esc(r.role)}${link}</div>${detail ? `<div class="rr-detail">${esc(detail)}</div>` : ''}${actions}</div>`;
+    }).join('');
+    return `<div class="review-section ${cls}"><h3>${title} (${rows.length})</h3>${items}</div>`;
+  }).join('');
+}
+
+function refreshReviewPanel() {
+  if (reviewOpen) document.getElementById('review-body').innerHTML = renderGroupedSummary(groupDecisions(), true);
+}
+
+// Re-decide a listing straight from the Review panel. Moving to Apply or
+// Reconsider is a one-click transition (decide() already handles re-deciding
+// an already-decided file). Moving to Decline needs a reason, so instead of
+// duplicating that picker inline, jump to the listing's own card and open it
+// there — same UI as deciding it normally.
+async function changeStatus(file, newKind) {
+  if (newKind === 'declined') {
+    closeReview();
+    const i = queue.findIndex(q => q.file === file);
+    if (i >= 0) { idx = i; render(); openPicker(); }
+    return;
+  }
+  const res = await postGuarded('/api/decide', { file, action: 'keep', intent: newKind });
+  if (!res || !res.ok) return;
+  lastDecidedPrevValue = decisions[file] || null;
+  decisions[file] = { type: newKind };
+  lastDecidedFile = file;
+  syncUndoButton();
+  refreshReviewPanel();
+}
+
+// Fully reverts a listing to how it looked before this session touched it —
+// clears status/keep_intent/decline_reason/reviewed and any decline-log
+// entries it produced, and drops it back into the live (unreviewed) queue.
+async function revertItem(file) {
+  const res = await postGuarded('/api/revert', { file });
+  if (!res || !res.ok) return;
+  delete decisions[file];
+  if (lastDecidedFile === file) lastDecidedFile = null;
+  syncUndoButton();
+  refreshReviewPanel();
+  toast('Removed — back in the queue');
+}
+
 function renderDone() {
-  const values = Object.values(decisions);
-  const counts = { keep: 0, company_fit: 0, role_fit: 0, stack_gap: 0, other: 0 };
-  values.forEach(d => { const k = d.type === 'keep' ? 'keep' : d.reason; counts[k] = (counts[k] || 0) + 1; });
-  const declined = values.length - counts.keep;
+  const groups = groupDecisions();
+  const total = groups.apply.length + groups.reconsider.length + groups.declined.length;
   stage.innerHTML = `
     <div class="done">
       <h2>Queue clear</h2>
-      <p style="color:#666">${values.length ? 'Reviewed ' + values.length + ' listing(s) this session.' : 'Nothing was in the To Apply queue.'}</p>
+      <p style="color:#666">${total ? 'Reviewed ' + total + ' listing(s) this session.' : 'Nothing was in the To Apply queue.'}</p>
       <div class="summary">
-        <div><div class="stat-num">${counts.keep}</div><div class="stat-label">Kept</div></div>
-        <div><div class="stat-num">${declined}</div><div class="stat-label">Declined</div></div>
+        <div><div class="stat-num">${groups.apply.length}</div><div class="stat-label">To apply</div></div>
+        <div><div class="stat-num">${groups.reconsider.length}</div><div class="stat-label">Reconsider</div></div>
+        <div><div class="stat-num">${groups.declined.length}</div><div class="stat-label">Declined</div></div>
       </div>
       <button class="btn-nav" onclick="prev()">‹ Back to review</button>
+      <button class="btn-nav" onclick="openReview()">Review (V)</button>
       <button class="btn-finish" onclick="finish()">Finish</button>
     </div>`;
+}
+
+function openReview() {
+  reviewOpen = true;
+  document.getElementById('review-body').innerHTML = renderGroupedSummary(groupDecisions(), true);
+  document.getElementById('review-overlay').classList.add('open');
+}
+
+function closeReview() {
+  reviewOpen = false;
+  document.getElementById('review-overlay').classList.remove('open');
 }
 
 function prev() {
@@ -497,8 +892,17 @@ function openPicker() {
   selectedReason = priorDecline ? decided.reason : null;
   noteEl.value = (priorDecline && decided.note) ? decided.note : '';
   document.querySelectorAll('.btn-reason').forEach(b => b.classList.toggle('active', b.dataset.key === selectedReason));
-  document.getElementById('confirm-decline-btn').disabled = !selectedReason;
+  updateConfirmState();
   noteEl.focus();
+}
+
+// Every reason but company_fit requires a note before Confirm decline
+// enables — a bare role_fit/stack_gap tag with no note doesn't carry
+// enough signal for job-search step 0b's repeat-pattern questions.
+function updateConfirmState() {
+  const note = document.getElementById('note').value.trim();
+  const ready = !!selectedReason && (selectedReason === 'company_fit' || note.length > 0);
+  document.getElementById('confirm-decline-btn').disabled = !ready;
 }
 
 function closePicker() {
@@ -507,23 +911,27 @@ function closePicker() {
   if (el) el.classList.remove('open');
 }
 
-async function keep() {
-  if (idx >= queue.length) return;
+async function keep(intent) {
+  if (idx >= queue.length || inFlight) return;
   const item = queue[idx];
-  await post('/api/decide', { file: item.file, action: 'keep' });
-  decisions[item.file] = { type: 'keep' };
+  const res = await postGuarded('/api/decide', { file: item.file, action: 'keep', intent });
+  if (!res || !res.ok) return;
+  lastDecidedPrevValue = decisions[item.file] || null;
+  decisions[item.file] = { type: intent };
   lastDecidedFile = item.file;
   next();
 }
 
 async function doDecline(reasonKey) {
-  if (idx >= queue.length) return;
+  if (idx >= queue.length || inFlight) return;
   const item = queue[idx];
   const note = document.getElementById('note').value.trim();
-  await post('/api/decide', {
+  const res = await postGuarded('/api/decide', {
     file: item.file, action: 'decline', reason: reasonKey, note,
     company: item.company, role: item.role,
   });
+  if (!res || !res.ok) return;
+  lastDecidedPrevValue = decisions[item.file] || null;
   decisions[item.file] = { type: 'decline', reason: reasonKey, note };
   lastDecidedFile = item.file;
   next();
@@ -535,45 +943,59 @@ function selectReason(key) {
   if (key === 'company_fit') { doDecline(key); return; }
   selectedReason = key;
   document.querySelectorAll('.btn-reason').forEach(b => b.classList.toggle('active', b.dataset.key === key));
-  document.getElementById('confirm-decline-btn').disabled = false;
+  updateConfirmState();
   document.getElementById('note').focus();
 }
 
 function confirmSelected() {
+  // Enter (the keyboard path here) bypasses the Confirm button's disabled
+  // state, so the note requirement has to be re-checked here too, not just
+  // reflected in the button.
   if (!selectedReason) return;
+  const note = document.getElementById('note').value.trim();
+  if (selectedReason !== 'company_fit' && !note) return;
   doDecline(selectedReason);
 }
 
 async function undo() {
   if (!lastDecidedFile) { toast('Nothing to undo'); return; }
-  const res = await post('/api/undo', {});
+  const res = await postGuarded('/api/undo', {});
+  if (!res || !res.ok) return;
+  const prevValue = lastDecidedPrevValue;
   lastDecidedFile = null;
-  if (!res.ok) { toast('Nothing more to undo'); return; }
-  delete decisions[res.file];
+  lastDecidedPrevValue = null;
+  if (prevValue) decisions[res.file] = prevValue; else delete decisions[res.file];
   const restoredIdx = queue.findIndex(q => q.file === res.file);
   idx = restoredIdx >= 0 ? restoredIdx : idx;
   render();
+  refreshReviewPanel();
+  syncUndoButton();
   toast('Undone');
 }
 
 async function finish() {
   await post('/api/finish', {});
-  const values = Object.values(decisions);
-  const keep = values.filter(d => d.type === 'keep').length;
-  const declined = values.length - keep;
-  const remaining = Math.max(0, queue.length - values.length);
+  const groups = groupDecisions();
+  const decided = groups.apply.length + groups.reconsider.length + groups.declined.length;
+  const remaining = Math.max(0, queue.length - decided);
   document.body.innerHTML = `
     <div class="done">
       <h2>Session saved</h2>
       <div class="summary">
-        <div><div class="stat-num">${keep}</div><div class="stat-label">Kept</div></div>
-        <div><div class="stat-num">${declined}</div><div class="stat-label">Declined</div></div>
+        <div><div class="stat-num">${groups.apply.length}</div><div class="stat-label">To apply</div></div>
+        <div><div class="stat-num">${groups.reconsider.length}</div><div class="stat-label">Reconsider</div></div>
+        <div><div class="stat-num">${groups.declined.length}</div><div class="stat-label">Declined</div></div>
       </div>
-      <p style="color:#666">${remaining ? remaining + ' listing(s) still queued for next time.' : 'Queue clear.'} You can close this tab.</p>
+      ${renderGroupedSummary(groups, false)}
+      <p style="color:#666; margin-top: 20px;">${remaining ? remaining + ' listing(s) still queued for next time.' : 'Queue clear.'} This session has ended (read-only) — run /triage again to change anything above. You can close this tab.</p>
     </div>`;
 }
 
 document.addEventListener('keydown', (e) => {
+  if (reviewOpen) {
+    if (e.key === 'Escape') closeReview();
+    return;
+  }
   if (pickerOpen) {
     if (e.key === 'Escape') { closePicker(); return; }
     if (e.key === 'Enter') { confirmSelected(); return; }
@@ -587,9 +1009,27 @@ document.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (k === 'u') { undo(); return; }
   if (k === 'f') { finish(); return; }
+  if (k === 'v') { openReview(); return; }
   if (idx >= queue.length) return;
-  if (k === 'k') keep();
+  if (k === 'k') keep('apply');
+  else if (k === 'r') keep('reconsider');
   else if (k === 'd') openPicker();
+});
+
+// Delegated instead of inline onclick="...('${file}')": file is a listing
+// filename slug that ultimately traces back to scraped company/role text
+// (job-search's curated-list/board sweeps), and interpolating it into an
+// inline event-handler attribute is unsafe even when HTML-escaped — the
+// browser HTML-decodes the attribute before compiling it as JS, so an
+// escaped quote there still reopens a JS-string-breakout the same way an
+// unescaped one would. Reading it from a data-attribute avoids that class of
+// bug entirely.
+document.getElementById('review-body').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const { action, file, kind } = btn.dataset;
+  if (action === 'move') changeStatus(file, kind);
+  else if (action === 'remove') revertItem(file);
 });
 
 render();
@@ -644,7 +1084,10 @@ def main():
         pass
     finally:
         server.server_close()
-        print(f"Session ended. Kept: {_session_counts['kept']}, Declined: {_session_counts['declined']}.")
+        print(
+            f"Session ended. To Apply: {_session_counts['apply']}, "
+            f"Reconsider: {_session_counts['reconsider']}, Declined: {_session_counts['declined']}."
+        )
 
 
 if __name__ == '__main__':
