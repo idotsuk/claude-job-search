@@ -178,7 +178,9 @@ Why it fits.
 
 ## `/triage`
 
-Run `/triage` to work through the "To Apply" pile one card at a time in a local browser tab (`scripts/triage_server.py`, no extra install — stdlib only). **Keep** leaves a listing queued; **Decline** demotes it to `status: Skipped` with a categorized reason and, for anything but company fit, a required note on what's missing. Prev/Next let you browse and revise freely; **Finish for now** ends the session anytime, progress saved. Every decline is also logged to `data/decline-log.yaml` for `/job-search` to learn from.
+Run `/triage` to work through the "To Apply" pile one card at a time in a local browser tab (`scripts/triage_server.py`, no extra install — stdlib only). **Keep** leaves a listing queued; **Decline** demotes it to `status: Skipped` with a categorized reason and, for anything but company fit, a required note on what's missing. Prev/Next let you browse and revise freely; **Finish for now** ends the session anytime, progress saved.
+
+Every decline is also logged to `data/decline-log.yaml`. Before its *next* scan, `/job-search` (step 0b) reads it and asks about each one directly — a single decline is enough, it doesn't wait for a repeat — e.g. "You declined Acme for company fit — add it to `company_blocklist`?" A yes edits `config.yaml` (`company_blocklist`, `profile.anti_interests`, or `search.location_blocklist`) immediately, in time to filter that same run; either way, that decline is marked seen so it won't ask again on the same evidence.
 
 ## Data & privacy
 

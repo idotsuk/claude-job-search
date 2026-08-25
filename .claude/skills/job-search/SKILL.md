@@ -29,7 +29,7 @@ Before anything else, establish **today's actual date** from the environment con
 2. **Bind these variables** from config and use them everywhere below. Echo the bound values (one compact block) into the conversation and later into the run log, so misbinding is visible:
    - `{role_focus}`, `{interests}`, `{anti_interests}`, `{seniority}`, `{locations}`, `{languages}`, `{timezone}` ← `profile.*`
    - `{cv_path}` ← `applicant.cv_path`
-   - `{target_companies}`, `{company_blocklist}`, `{rejected_companies}`, `{agency_blocklist}`, `{excluded_domains}` ← `search.*`
+   - `{target_companies}`, `{company_blocklist}`, `{location_blocklist}`, `{rejected_companies}`, `{agency_blocklist}`, `{excluded_domains}` ← `search.*`
    - `{li_keywords}`, `{li_location}`, `{li_tpr}` ← `search.linkedin.*`; `{discovery_hints}` ← `search.discovery_hints`
    - `{gmail_enabled}`, `{gmail_window}`, `{wa_enabled}`, `{wa_chat_db}`, `{wa_contacts_db}`, `{wa_keywords}` (only the language sets in `{languages}`), `{wa_max_chat}`, `{cal_enabled}`, `{chrome_path}` ← `integrations.*`
    - `{stale_days}` ← `pipeline.stale_after_days`
@@ -51,6 +51,25 @@ Before anything else, establish **today's actual date** from the environment con
    ATS JSON APIs and web search need no integration — a run with zero connections still sweeps company boards and discovers sources.
 
 5. **Ask for the CV if it's missing.** If `{cv_path}` is unset or the file doesn't exist, ask the user for the path to their current CV/resume (once per run, not per step) and write it back to `config.yaml` under `applicant.cv_path`. Having the CV on file lets triage and `/apply` work from the user's actual experience instead of the one-line `role_focus`. If the user declines or doesn't have one handy, continue the run normally and note it under `sources_skipped`-style remarks in the run report body — never block a run on it.
+
+### 0b. Triage-suggestion pass (interactive, before the scan)
+
+Runs here — before any searching — so that a suggestion you accept can filter *this* run's results, not just the next one.
+
+1. If `data/decline-log.yaml` doesn't exist, skip this step silently — nothing to learn from yet.
+2. Otherwise run `python3 scripts/triage_suggestions.py` and read its JSON: every decline-log entry (`id`, `date`, `file`, `company`, `role`, `reason`, `note`, and `suggested: true` if it's already been asked about).
+3. Group entries **that include at least one without `suggested: true`** into candidates — a group built entirely from already-`suggested` entries has nothing new to say and must not be re-asked. Unlike an early version of this step, **a single decline is enough to ask about — don't wait for a repeat**; a repeat just makes the ask more confident, it isn't the bar for asking at all:
+   - **`reason: company_fit`** → group by `company` (case-insensitive); even one decline at a company is a candidate → add the company to `search.company_blocklist`.
+   - **`reason: stack_gap`** → group by shared technology/keyword in `note` (your own judgment reading the free text, not a literal string match); a note with no obvious match to any other entry is still its own one-entry candidate → add the keyword to `profile.anti_interests`.
+   - **`reason: role_fit`** → group by shared title keyword across `role`/`note`, same one-entry-is-enough rule → `anti_interests`.
+   - **`reason: other`** → judge the `note`: if it names a place (city/region), group by that place → candidate: add it to `search.location_blocklist`. Otherwise treat it like `role_fit`/`stack_gap` → `anti_interests`. A note-free `other` entry has nothing to act on — skip it, there's no signal to ask about.
+   - Skip any candidate whose value is already present in the relevant `config.yaml` list — nothing left to suggest.
+4. For each candidate, ask the user directly and concretely — one plain yes/no question per candidate, naming the specific decline(s) behind it, e.g.: *"You declined Acme for company fit — add Acme to `search.company_blocklist`?"* (or, once it's a repeat: *"You've now declined 2 roles at Acme for company fit..."*).
+5. On **yes**: edit `config.yaml` yourself right then (append to the named list, matching its existing formatting — `search.location_blocklist` is a new plain string list, same shape as `company_blocklist`, add it under `search:` with a one-line comment if it isn't in the file yet) so this run's search/filter steps already see it.
+6. **Either way** (yes or no): run `python3 scripts/triage_suggestions.py --mark-seen <id> <id> ...` for every entry that contributed to that candidate. This is what makes a "no" stick — that exact entry won't be asked about again; a *different* future decline (a new company, a new keyword, or a second decline reinforcing an already-declined one) still gets its own fresh ask.
+7. Track what was actually **applied** (not merely asked) as `{triage_config_updates}`, a list of short strings like `"company_blocklist += Acme"`, for the run report (step 8).
+
+Never touch `config.yaml` from this step without an explicit yes — same rule as any other config change.
 
 ### 1. Load existing listings
 
@@ -110,7 +129,7 @@ Sweep every source in `data/sources.yaml` with `tier: 1` or `tier: 2` using its 
 3. **No `f_E` seniority filter.** It's not the noise axis. The seniority signal is in the keyword itself or in the post-hoc title regex. Adding `f_E=4,5,6` doesn't fix off-title matches and shrinks the corpus.
 4. **Filter URL:** `https://www.linkedin.com/jobs/search/?keywords=<phrase>&location={li_location}&f_TPR={li_tpr}&sortBy=DD` (recent window + location + most recent first).
 5. **Pagination:** loop `&start=0, 25, 50, …` up to `max_pages` per keyword. Each page also intra-scrolls the inner list container until the card count stabilizes (LinkedIn virtualizes). Stop early when LinkedIn shows the `.jobs-search-no-results-banner` OR a page returns 0 new URLs.
-6. **Post-hoc filter:** drop companies in `{company_blocklist}` + `{agency_blocklist}` + `{rejected_companies}`, and roles matching `{anti_interests}` / `{excluded_domains}`. Dedupe by URL first, then by `(company, role)` slug similarity against the listings tree.
+6. **Post-hoc filter:** drop companies in `{company_blocklist}` + `{agency_blocklist}` + `{rejected_companies}`, roles matching `{anti_interests}` / `{excluded_domains}`, and postings whose location(s) are **all** on `{location_blocklist}` (a place name filter, distinct from `{locations}`'s positive match) — split a multi-office `location` on commas first; a role offering even one non-blocked office stays. Dedupe by URL first, then by `(company, role)` slug similarity against the listings tree.
 7. **Remote-without-location drop.** Unless `accept_remote_without_location_match` is true, drop roles whose location is `*Remote*` without any `{locations}` match — remote-anywhere posts rarely accept out-of-region candidates.
 
 Known pitfalls (don't re-try):
@@ -216,6 +235,8 @@ Brief context about the role and why it's a good fit.
 | Date | Channel | Direction | Contact | Summary |
 |------|---------|-----------|---------|---------|
 ```
+
+**Multi-location postings**: if the source lists more than one office for the same role (e.g. "Tel Aviv or Netanya"), record all of them in `location:` comma-separated (`Tel Aviv, Netanya`) — don't collapse to a single city. Step 3's `{location_blocklist}` filter only drops a listing when *every* comma-separated location is blocked, so a role stays visible as long as at least one offered office isn't on the blocklist.
 
 The empty `## Communications` table is seeded on creation; future Gmail/WhatsApp scans append rows here rather than writing free-form body notes. Conventions:
 - **Date**: `YYYY-MM-DD` (anchored to step 0 `{today}` for events processed in this run; use the actual event date for past events being backfilled).
@@ -391,6 +412,7 @@ new_probation: [...]                                          # discovered this 
 new_companies: [...]
 auto_stale: <count of listings auto-demoted to Stale>
 calendar_synced: <count of calendar events created in step 7a; 0 if gated off>
+triage_config_updates: [...]                                  # config.yaml changes applied from step 0b; [] if none
 config_bound: "<one-line echo of the key bound values: role_focus | locations | # keywords>"
 ---
 
@@ -427,6 +449,7 @@ Summarize:
 - **Probation outcomes** — what was smoke-tested, what was promoted, what was dropped
 - **New probation entries** — net-new candidates seeded for next run
 - **Auto-stale count** — how many listings moved to Stale
+- **Triage config updates** — any `company_blocklist`/`anti_interests` changes applied this run from step 0b's repeat-decline questions, asked and applied *before* the scan ran (so this run's results already reflect them). Mention `/triage` if the `To Apply` pile is large and hasn't been reviewed recently.
 - **Calendar sync** — events created in step 7a, and any ⚠️ scheduling conflicts (conflicts must appear in the final user summary, not just the run file)
 - **Integrations skipped this run** — one line each with the concrete enable command/pointer (Playwright install, Gmail connector, `docs/whatsapp-setup.md`, calendar). This is the recurring nudge — keep it short, never blocking.
 - **Delta vs. last run**: change in new-added count, new sources that worked, hit rate comparison

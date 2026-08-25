@@ -65,6 +65,13 @@ search:
   # Optional. Companies never to list (wrong domain, personal exclusions).
   company_blocklist: []
 
+  # Optional. Place names (city/region) whose postings are always dropped —
+  # distinct from profile.locations, which is a positive match instead. A
+  # multi-office posting is only dropped if EVERY office it lists is here —
+  # one non-blocked office is enough to keep it.
+  # Populated interactively by job-search step 0b from /triage declines.
+  location_blocklist: []
+
   # Optional. Companies where a prior process ended (rejection or you passed).
   # New roles at these are recorded as skip:rejected, never queued.
   rejected_companies: []
