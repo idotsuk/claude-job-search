@@ -4,7 +4,7 @@ An agentic job-search pipeline for [Claude Code](https://claude.com/claude-code)
 
 **What you get:**
 
-- **`/job-search`** — the sweep. LinkedIn (authenticated, via Playwright), company career boards (ATS JSON APIs first — Greenhouse/Lever/Ashby/Comeet — no browser needed), curated startup-list sweeps, plus a self-growing source registry: every run discovers new candidate sources, smoke-tests them, and promotes the ones that yield. Gmail and WhatsApp scans update your pipeline statuses automatically. Ends with a run report, a delta chart, and a self-contained HTML dashboard.
+- **`/job-search`** — the sweep. LinkedIn (authenticated, via Playwright), company career boards (ATS JSON APIs first — Greenhouse/Lever/Ashby/Comeet — no browser needed), a curated company watchlist (`search.target_companies` in `config.yaml` — give a company its known ATS board and it's polled directly, zero-token, no discovery step needed), curated startup-list sweeps, plus a self-growing source registry: every run discovers new candidate sources, smoke-tests them, and promotes the ones that yield. Gmail and WhatsApp scans update your pipeline statuses automatically. Ends with a run report, a delta chart, and a self-contained HTML dashboard.
 - **`/apply`** — the application assistant. Works your "To Apply" queue one role at a time: opens the canonical posting, prefills standard fields from your config, and **never submits without your explicit go-ahead**.
 - **A plain-files data model** — every tracked role is a markdown file with YAML frontmatter and a communications log. Grep it, edit it, sync it to Obsidian, or pipe it anywhere.
 
@@ -68,7 +68,7 @@ A run walks these steps (`.claude/skills/job-search/SKILL.md`):
 
 1. **Anchor today's date**, load config, preflight integrations.
 2. **Load** the listings tree and run history.
-3. **Sweep** every registered source in parallel: LinkedIn (quoted-phrase keywords, pagination, post-hoc blocklists), company boards (ATS JSON APIs before any browser), tier-2 boards, probation smoke-tests, and 2–3 meta-searches that discover **new** sources for next run. Curated startup lists get cross-referenced company-by-company against a persistent triage cache.
+3. **Sweep** every registered source in parallel: LinkedIn (quoted-phrase keywords, pagination, post-hoc blocklists), the curated company watchlist (pre-configured `{name, ats, board}` entries hit the board's JSON API directly, no discovery step), other company boards (ATS JSON APIs before any browser), tier-2 boards, probation smoke-tests, and 2–3 meta-searches that discover **new** sources for next run. Curated startup lists get cross-referenced company-by-company against a persistent triage cache.
 4. **Dedup** against the tree (company + role similarity; canonical URLs beat aggregators).
 5. **Write** one markdown file per new role.
 6. **Gmail scan** — classify the whole inbox window (no brittle `from:` filters), update statuses, log every touch in the role's communications table.

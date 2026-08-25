@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{NAME}} — CV</title>
+<style>
+  /* ===================================================================
+     Fonts — extracted directly from the user's own Google Docs export
+     (a Google Docs .docx export ships these exact TTFs embedded).
+     Merriweather = serif, used for the name and all body/bullet text.
+     Open Sans = sans-serif, used for section headings, contact info,
+     and skill-group labels. This is not a substitution — these are the
+     literal font files the source document used.
+     =================================================================== */
+  @font-face {
+    font-family: "Merriweather";
+    src: url("fonts/Merriweather-Regular.ttf") format("truetype");
+    font-weight: 400;
+    font-style: normal;
+  }
+  @font-face {
+    font-family: "Merriweather";
+    src: url("fonts/Merriweather-Bold.ttf") format("truetype");
+    font-weight: 700;
+    font-style: normal;
+  }
+  @font-face {
+    font-family: "Merriweather";
+    src: url("fonts/Merriweather-Italic.ttf") format("truetype");
+    font-weight: 400;
+    font-style: italic;
+  }
+  @font-face {
+    font-family: "Merriweather";
+    src: url("fonts/Merriweather-BoldItalic.ttf") format("truetype");
+    font-weight: 700;
+    font-style: italic;
+  }
+  @font-face {
+    font-family: "Open Sans";
+    src: url("fonts/OpenSans-Regular.ttf") format("truetype");
+    font-weight: 400;
+    font-style: normal;
+  }
+  @font-face {
+    font-family: "Open Sans";
+    src: url("fonts/OpenSans-Bold.ttf") format("truetype");
+    font-weight: 700;
+    font-style: normal;
+  }
+  @font-face {
+    font-family: "Open Sans";
+    src: url("fonts/OpenSans-Italic.ttf") format("truetype");
+    font-weight: 400;
+    font-style: italic;
+  }
+  @font-face {
+    font-family: "Open Sans";
+    src: url("fonts/OpenSans-BoldItalic.ttf") format("truetype");
+    font-weight: 700;
+    font-style: italic;
+  }
+
+  :root {
+    --accent: #2079c7;      /* section-title / skill-label blue */
+    --link: #1155cc;        /* email / linkedin link blue */
+    --ink: #000000;         /* headings, company names, role titles */
+    --body: #666666;        /* default body/bullet text gray (doc default) */
+    --muted: #555555;
+    --serif: "Merriweather", Georgia, "Times New Roman", serif;
+    --sans: "Open Sans", Arial, Helvetica, sans-serif;
+    --page-margin-top: 0.4in;
+    --page-margin-bottom: 0.3in; /* source used 0; 0.3in avoids print-driver clipping */
+    --page-margin-side: 0.6in;
+  }
+
+  @page {
+    size: Letter;
+    margin: var(--page-margin-top) var(--page-margin-side) var(--page-margin-bottom) var(--page-margin-side);
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body {
+    font-family: var(--serif);
+    font-size: 9pt;
+    line-height: 1.13;
+    color: var(--body);
+    background: #ffffff;
+  }
+
+  .page {
+    width: 100%;
+  }
+
+  a {
+    color: var(--link);
+    text-decoration: underline;
+  }
+
+  /* ===================== HEADER (2-col table in source) ===================== */
+  .header {
+    display: grid;
+    grid-template-columns: 68.5fr 31.5fr;  /* fr, not %, so column-gap doesn't push the sidebar past the page edge */
+    column-gap: 0.2in;
+    margin-bottom: 14px;
+  }
+
+  .header .name {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-style: italic;
+    font-size: 27pt;
+    color: var(--ink);
+    line-height: 1.15;
+    margin-bottom: 6px;
+  }
+
+  .header .summary {
+    font-family: var(--sans);
+    font-style: italic;
+    font-size: 9pt;
+    line-height: 1.3;
+    color: var(--ink);
+  }
+
+  .contact {
+    font-family: var(--sans);
+    font-size: 9pt;
+    color: var(--ink);
+  }
+
+  .contact div {
+    margin-bottom: 3px;
+  }
+
+  .contact .phone {
+    font-weight: 700;
+  }
+
+  .contact a {
+    font-weight: 700;
+    color: var(--link);
+  }
+
+  /* ===================== BODY (2-col table in source) ===================== */
+  .body-grid {
+    display: grid;
+    grid-template-columns: 68.5fr 31.5fr;  /* fr, not %, so column-gap doesn't push the sidebar past the page edge */
+    column-gap: 0.2in;
+    align-items: start;
+  }
+
+  .col-main, .col-side {
+    min-width: 0;
+  }
+
+  /* ===================== SECTION TITLES (Heading 1) ===================== */
+  .section-title {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 9pt;
+    color: var(--accent);
+    margin-top: 12px;
+    margin-bottom: 4px;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .section-title:first-child {
+    margin-top: 0;
+  }
+
+  /* CORE EXPERTISE: sub-header uses the same visual weight as a section
+     title (that is how the source document styled it — both use the
+     Heading 1 paragraph style). */
+  .sub-header {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 9pt;
+    color: var(--accent);
+    margin-top: 8px;
+    margin-bottom: 4px;
+  }
+
+  /* ===================== EXPERIENCE / job entries ===================== */
+  .company-block {
+    margin-top: 8px;
+  }
+  .company-block:first-of-type {
+    margin-top: 0;
+  }
+
+  .company-line {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 11pt;
+    color: var(--ink);
+    line-height: 1.2;
+  }
+
+  .company-line .company-meta {
+    font-weight: 400;
+  }
+
+  .company-line .company-dates {
+    font-weight: 400;
+    font-style: italic;
+  }
+
+  .role-block {
+    margin-top: 6px;
+  }
+
+  .role-title {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 9pt;
+    color: var(--ink);
+    margin-bottom: 3px;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  ul.bullet-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  ul.bullet-list li {
+    position: relative;
+    padding-left: 14px;
+    margin-bottom: 4px;
+    font-family: var(--serif);
+    font-size: 9pt;
+    line-height: 1.35;
+    color: var(--body);
+    break-inside: avoid;
+    page-break-inside: avoid;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  ul.bullet-list li::before {
+    content: "\25CF"; /* ● filled circle, matches source numbering.xml lvlText */
+    position: absolute;
+    left: 0;
+    font-size: 6pt;
+    top: 0.45em;
+    color: var(--body);
+  }
+
+  /* ===================== EDUCATION / ARMY entries ===================== */
+  .entry-block {
+    margin-top: 8px;
+  }
+  .entry-block:first-of-type {
+    margin-top: 0;
+  }
+
+  .entry-line {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 9pt;
+    color: var(--ink);
+    line-height: 1.3;
+  }
+
+  .entry-line .entry-org {
+    font-weight: 400;
+  }
+
+  .entry-line .entry-dates {
+    font-weight: 400;
+    font-style: italic;
+  }
+
+  .entry-block ul.bullet-list {
+    margin-top: 3px;
+  }
+
+  /* ===================== SKILLS (sidebar) ===================== */
+  /* Source docx: CORE EXPERTISE is 7 separate bulleted paragraphs (one
+     expertise per row). STACK/CLOUD & INFRASTRUCTURE/LANGUAGES are each
+     a single bulleted paragraph with items dot-joined and grouped by
+     manual line breaks — that grouping is intentional, not a bug. */
+  ul.core-expertise-list {
+    margin-top: 4px;
+  }
+
+  /* no own margin-top: the nested .sub-header already carries the 8px
+     gap above each group label, same as CORE EXPERTISE's sub-header */
+  .skill-group .skill-items {
+    margin-top: 4px;
+    font-family: var(--serif);
+    font-size: 9pt;
+    line-height: 1.35;
+    color: var(--body);
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  /* ===================== Page-break hygiene ===================== */
+  .section-title, .company-line, .role-title, .entry-line {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  .company-block, .role-block, .entry-block {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ===================== HEADER ===================== -->
+  <div class="header">
+    <div>
+      <div class="name">{{NAME}}</div>
+      <div class="summary">{{SUMMARY}}</div>
+    </div>
+    <div class="contact">
+      <div class="location">{{LOCATION}}</div>
+      <div class="phone">{{PHONE}}</div>
+      <div><a href="mailto:{{EMAIL}}">{{EMAIL}}</a></div>
+      <div><a href="{{LINKEDIN_URL}}">{{LINKEDIN_DISPLAY}}</a></div>
+    </div>
+  </div>
+
+  <!-- ===================== BODY: two columns ===================== -->
+  <div class="body-grid">
+
+    <!-- ---------- MAIN COLUMN ---------- -->
+    <div class="col-main">
+
+      <!--SECTION:EXPERIENCE-->
+      <div class="section-title">EXPERIENCE</div>
+
+      <!--BLOCK:COMPANY-->
+      <div class="company-block">
+        <div class="company-line">{{COMPANY_NAME}}<span class="company-meta">{{COMPANY_META}}</span><span class="company-dates">{{COMPANY_DATES}}</span></div>
+
+        <!--BLOCK:ROLE-->
+        <div class="role-block">
+          <div class="role-title">{{ROLE_TITLE}}{{ROLE_DATES}}</div>
+          <ul class="bullet-list">
+            <!--BLOCK:BULLET--><li>{{BULLET_TEXT}}</li><!--/BLOCK:BULLET-->
+          </ul>
+        </div>
+        <!--/BLOCK:ROLE-->
+
+      </div>
+      <!--/BLOCK:COMPANY-->
+      <!--/SECTION:EXPERIENCE-->
+
+      <!--SECTION:EDUCATION-->
+      <div class="section-title">EDUCATION</div>
+
+      <!--BLOCK:EDU_ENTRY-->
+      <div class="entry-block">
+        <div class="entry-line">{{EDU_TITLE}}<span class="entry-org">{{EDU_ORG}}</span><span class="entry-dates">{{EDU_DATES}}</span></div>
+        <ul class="bullet-list">
+          <!--BLOCK:EDU_BULLET--><li>{{EDU_BULLET_TEXT}}</li><!--/BLOCK:EDU_BULLET-->
+        </ul>
+      </div>
+      <!--/BLOCK:EDU_ENTRY-->
+      <!--/SECTION:EDUCATION-->
+
+      <!--SECTION:ARMY-->
+      <div class="section-title">ARMY</div>
+
+      <!--BLOCK:ARMY_ENTRY-->
+      <div class="entry-block">
+        <div class="entry-line">{{ARMY_TITLE}}<span class="entry-org">{{ARMY_ORG}}</span><span class="entry-dates">{{ARMY_DATES}}</span></div>
+        <ul class="bullet-list">
+          <!--BLOCK:ARMY_BULLET--><li>{{ARMY_BULLET_TEXT}}</li><!--/BLOCK:ARMY_BULLET-->
+        </ul>
+      </div>
+      <!--/BLOCK:ARMY_ENTRY-->
+      <!--/SECTION:ARMY-->
+
+    </div>
+
+    <!-- ---------- SIDEBAR COLUMN ---------- -->
+    <div class="col-side">
+
+      <!--SECTION:SKILLS-->
+      <div class="section-title">SKILLS</div>
+      <div class="sub-header">CORE EXPERTISE:</div>
+      <ul class="bullet-list core-expertise-list">
+        <!--BLOCK:CORE_EXPERTISE_ITEM--><li>{{CORE_EXPERTISE_ITEM}}</li><!--/BLOCK:CORE_EXPERTISE_ITEM-->
+      </ul>
+
+      <!--BLOCK:SKILL_GROUP-->
+      <div class="skill-group">
+        <div class="sub-header">{{SKILL_GROUP_LABEL}}:</div>
+        <div class="skill-items">{{SKILL_GROUP_ITEMS}}</div>
+      </div>
+      <!--/BLOCK:SKILL_GROUP-->
+      <!--/SECTION:SKILLS-->
+
+    </div>
+
+  </div>
+
+</div>
+</body>
+</html>
