@@ -25,13 +25,8 @@ import lib
 DATA = lib.data_root()
 OUT = DATA / 'reports' / 'chart-latest.png'
 
-STATUS_ORDER = ['To Apply', 'Applied', 'Screen', 'Interviewing', 'Offer', 'Stale', 'Rejected', 'Skipped', 'Passed']
-STATUS_COLORS = {
-    'To Apply': '#42a5f5', 'Applied': '#26a69a', 'Screen': '#ffa726',
-    'Interviewing': '#ab47bc', 'Offer': '#66bb6a',
-    'Stale': '#8d6e63',
-    'Rejected': '#ef5350', 'Skipped': '#bdbdbd', 'Passed': '#90a4ae',
-}
+STATUS_ORDER = lib.STATUS_ORDER
+STATUS_COLORS = lib.STATUS_COLORS
 
 
 def parse_frontmatter(text):
