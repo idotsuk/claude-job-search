@@ -5,6 +5,7 @@ An agentic job-search pipeline for [Claude Code](https://claude.com/claude-code)
 **What you get:**
 
 - **`/job-search`** — the sweep. LinkedIn (authenticated, via Playwright), company career boards (ATS JSON APIs first — Greenhouse/Lever/Ashby/Comeet — no browser needed), a curated company watchlist (`search.target_companies` in `config.yaml` — give a company its known ATS board and it's polled directly, zero-token, no discovery step needed), curated startup-list sweeps, plus a self-growing source registry: every run discovers new candidate sources, smoke-tests them, and promotes the ones that yield. Gmail and WhatsApp scans update your pipeline statuses automatically. Ends with a run report, a delta chart, and a self-contained HTML dashboard.
+- **`/triage`** — a local, one-at-a-time review UI for the "To Apply" pile: keep a listing queued, or decline it with a reason (company fit, role fit, tech-stack gap, other) and an optional note. Every decision writes back to the listing and to a decision log for `/job-search` to learn from on its next run.
 - **`/score-listings`** — scores every "To Apply" listing 0–100 for pure technical/domain fit against your CV, with a plain-English verdict explaining the number, and a self-contained HTML report. Run this before you start applying, so you work the best-fit roles first.
 - **`/tailor-cv`** — generates a per-job tailored, one-page CV: reorders and lightly rephrases your real content for relevance, never invents anything. Manual mode targets one listing by name; batch mode processes every scored listing above your configured threshold.
 - **`/apply`** — the application assistant. Works your "To Apply" queue one role at a time: opens the canonical posting, prefills standard fields from your config, surfaces a warm-contact nudge right before you'd apply cold if `/network-scan` found one, and **never submits without your explicit go-ahead**.
@@ -32,6 +33,7 @@ The first run creates `data/`, seeds the source registry, and — if `applicant.
 
 ```
 /job-search       # sweep for new roles, run this regularly (weekly is typical)
+/triage           # optional: work the To Apply pile one card at a time, keep or decline
 /score-listings   # rank the queue against your CV; asks a one-time setup question the first time (see below)
 /tailor-cv        # optional: generate a tailored CV PDF for a specific role, or a batch of top-scored ones
 /apply            # work the queue, highest-scored first; never submits without your go-ahead
@@ -173,6 +175,10 @@ Why it fits.
 ```
 
 `Stale` is automatic: any Applied/Screen/Interviewing role with no logged activity for `pipeline.stale_after_days` (default 7) gets demoted by `scripts/mark_stale.py`, so "Interviewing" always means real momentum.
+
+## `/triage`
+
+Run `/triage` to work through the "To Apply" pile one card at a time in a local browser tab (`scripts/triage_server.py`, no extra install — stdlib only). **Keep** leaves a listing queued; **Decline** demotes it to `status: Skipped` with a categorized reason and, for anything but company fit, a required note on what's missing. Prev/Next let you browse and revise freely; **Finish for now** ends the session anytime, progress saved. Every decline is also logged to `data/decline-log.yaml` for `/job-search` to learn from.
 
 ## Data & privacy
 
