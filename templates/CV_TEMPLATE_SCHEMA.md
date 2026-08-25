@@ -180,7 +180,16 @@ against a different source document:
    and the column-width ratio from its table grid, the same way this
    document's "Source of truth for the design" section describes.
 3. Extract any embedded fonts (Google Docs `.docx` exports typically bundle
-   the TTFs used) into `data/cv-template/fonts/*.ttf`.
+   the TTFs used) into `data/cv-template/fonts/*.ttf`. **Watch filename
+   casing**: a docx's embedded font files are commonly lowercased (e.g.
+   `merriweather-bold.ttf`) while the `@font-face` rules you write reference
+   them by a specific case (e.g. `Merriweather-Bold.ttf`, matching the shared
+   default's convention). `url()` paths are case-sensitive on Linux (macOS
+   is usually case-insensitive so this can pass locally and still break
+   elsewhere) — rename the extracted files to match exactly what the
+   `@font-face` rules say, or the fonts silently fail to load and the PDF
+   falls back to system fonts with no error. This is a real, tested failure
+   mode, not a hypothetical one.
 4. Start from `templates/cv-template.html`'s own structure (the
    `{{PLACEHOLDER}}` / `<!--BLOCK:...-->` / `<!--SECTION:...-->` markers must
    stay byte-identical in name and nesting — only the CSS design tokens and
