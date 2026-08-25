@@ -41,9 +41,26 @@ profile:
 
 # ─── Search ───────────────────────────────────────────────────────────────────
 search:
-  # Optional. Companies whose careers boards get swept directly every run.
-  # Empty list = skip the company-specific pass; rely on the source registry.
+  # Optional. Companies whose careers boards get swept directly every run —
+  # the curated company watchlist (see SKILL.md step 3a). Empty list = skip
+  # the company-specific pass; rely on the source registry.
+  #
+  # Two entry forms, mixable in the same list:
+  #   - A rich mapping with known ATS coordinates: zero-token, no resolution
+  #     step, calls the board's public JSON API directly.
+  #       { name: <Company>, ats: greenhouse|lever|ashby|comeet|workday|other, board: <slug-or-url> }
+  #     `board` is the board slug for greenhouse/lever/ashby (the part of the
+  #     URL after /boards/ or /v0/postings/); for comeet/workday/other, use
+  #     the full careers-board URL since those need more than a slug.
+  #   - A plain string (company name only): resolved via search each run,
+  #     same as before this field supported rich entries. Costs a small
+  #     lookup step; upgrade to a rich mapping once you know the board.
   target_companies: []
+  # target_companies:
+  #   - { name: Wiz, ats: greenhouse, board: wiz }
+  #   - { name: Snyk, ats: lever, board: snyk }
+  #   - { name: Vercel, ats: ashby, board: vercel }
+  #   - Some Other Company Without Known ATS Board
 
   # Optional. Companies never to list (wrong domain, personal exclusions).
   company_blocklist: []
@@ -77,6 +94,17 @@ search:
   # Optional. Local ecosystem names to seed source discovery meta-queries:
   # tech press, VC firms, startup-list publishers in your market.
   discovery_hints: []           # e.g. ["Sifted", "local VC portfolio boards"]
+
+  # Optional — only needed for /network-scan (run occasionally, e.g. monthly;
+  # not used by /job-search). Path to your LinkedIn "Connections.csv" export.
+  # See docs/linkedin-contacts-export-guide.md for how to download it.
+  linkedin_contacts_csv_path: ~/Downloads/Connections.csv
+
+  network_scan:
+    # Default number of most-recently-connected contacts to scan when
+    # /network-scan is run with no argument. Override per run with
+    # `/network-scan 100` or `/network-scan all`.
+    default_contact_limit: 50
 
 # ─── Integrations — all opt-in; missing ones are skipped gracefully ──────────
 integrations:
@@ -135,3 +163,25 @@ pipeline:
   # Applied/Screen/Interviewing listings with no activity for this many days
   # are auto-demoted to Stale by scripts/mark_stale.py.
   stale_after_days: 7
+
+# ─── Tailoring — CV tailoring threshold ───────────────────────────────────────
+tailoring:
+  # match_score (as set by /score-listings) above which /tailor-cv auto-generates
+  # a tailored CV draft for a listing. Below this threshold, tailoring only
+  # happens on manual request.
+  auto_tailor_min_score: 70
+
+# ─── Career notes — extra background beyond your CV ──────────────────────────
+# /score-listings and /tailor-cv can draw on more than your one-page resume via
+# an optional data/career-notes.md file (gitignored, like everything under
+# data/) holding true, sourced accomplishment detail that didn't fit on one
+# page — used as equally-valid scoring/tailoring evidence alongside the CV.
+career_notes:
+  # true       — data/career-notes.md is in play. /score-listings builds it via
+  #              a short one-time interview on its first run if the file
+  #              doesn't exist yet, then both skills read it on every run after.
+  # false      — resume-only. Neither skill reads data/career-notes.md even if
+  #              it happens to exist.
+  # null/unset — not yet decided. /score-listings asks once on its next run and
+  #              writes your answer here; you won't be asked again.
+  use_interview: null

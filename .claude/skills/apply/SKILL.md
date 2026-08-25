@@ -29,7 +29,7 @@ Work through "To Apply" entries in `data/listings/`, one at a time, with the use
 
 Read `config.yaml` → the `applicant:` block (name, email, phone, LinkedIn, GitHub, city, country, pronouns, CV path, salary expectation, notice period, work setup, work authorization). If `applicant.standard_answers_file` is set, read that file too for freeform supplements (mailing address, current-company wording).
 
-**Verify the CV file at `applicant.cv_path` actually exists** before starting. If missing, ask the user for the current path and update config.yaml.
+**Verify the CV file at `applicant.cv_path` actually exists** before starting. If missing, ask the user for the current path and update config.yaml. This is the always-required fallback CV; a per-listing tailored PDF (from `/tailor-cv`) may override it for individual roles — see step 4a.
 
 ### 2. Pull the "To Apply" queue
 
@@ -52,6 +52,10 @@ Rank the To Apply list by fit against the config profile:
 - **Tier B:** strong domain fit with `profile.interests`/`profile.role_focus` but not a target company.
 - **Tier C (last):** borderline (adjacent domains, small startups, Easy-Apply only).
 
+**If a listing has `match_score`/`match_verdict` frontmatter** (set by `/score-listings`), use it as a secondary sort within each tier — highest `match_score` first — and surface the one-line verdict alongside the fit note, e.g. `"[82] strong domain match — production LLM/agentic experience directly overlaps this role's stack."` Listings without `match_score` keep today's unchanged tier-only ordering — never block or reorder the queue waiting on a score.
+
+**If a listing has `warm_contact: true`/`contact_name` frontmatter** (set by `/network-scan`), surface it inline in the queue too — e.g. `"🤝 warm contact: Gilad Sagi (Associate Account Manager)"` — right alongside the match-score line. Don't use it to reorder tiers (a warm contact doesn't change technical fit), just make it visible so the user can decide to reach out before applying.
+
 Group secondarily by ATS for momentum (Greenhouse → Ashby → Comeet → SmartRecruiters → Workday → Microsoft careers → others). Greenhouse/Ashby are fastest; Workday is slowest (often requires account creation).
 
 Present the ordered list to the user. Ask: "Start with #1 [Company — Role]?"
@@ -63,9 +67,17 @@ For each role:
 #### a) Confirm
 "**[Company] — [Role]** · [Location], [hybrid/onsite] · [ATS] · [1-line fit note] · Apply?"
 
+**If `warm_contact: true`/`contact_name` is set on this listing**, lead with it before asking to apply — this is the moment it's actually actionable, not just informational: "🤝 You know **{contact_name}** here (via `/network-scan`) — worth reaching out before applying cold. Apply anyway, or hold off first?" Don't block on this or assume the user has reached out; just make sure they can't miss it at the one point where cold-applying is about to become irreversible.
+
 If user says skip/pass/no → update the listing file's frontmatter: `status: Passed`, append a note in the body explaining why. Move to next.
 
 If user says yes → open canonical URL (the `url` field from frontmatter). Never the LinkedIn aggregator unless that's all that exists.
+
+**Resolve which CV to use for this role**, from the listing's own frontmatter:
+- If `cv_status: approved` **and** `cv_output_dir` is set **and** `<cv_output_dir>/cv.pdf` actually exists on disk → use that tailored PDF. This is a listing that's been through `/tailor-cv` and the user has reviewed and approved the draft.
+- Otherwise — `cv_status` missing, `cv_status: draft` (generated but not yet reviewed), or the file doesn't actually exist — **silently fall back to `applicant.cv_path`**, exactly as today. Never use a `draft`/unreviewed tailored CV for a real submission; that's an explicit design decision (nothing goes out that the user hasn't seen).
+
+Hold the resolved path as `{cv_path}` for the rest of this role's loop.
 
 #### b) Prefill
 
@@ -80,7 +92,7 @@ For each known ATS pattern, prefill these fields without asking (all values from
 - Visa sponsorship questions → from `applicant.work_authorization`
 - Pronouns (if asked and `applicant.pronouns` is set; skip otherwise)
 - GDPR / privacy consent → checked / "Confirm"
-- Resume upload → use `mcp__playwright__browser_file_upload` with `applicant.cv_path`
+- Resume upload → use `mcp__playwright__browser_file_upload` with `{cv_path}` (resolved above — the approved tailored PDF if one exists for this listing, otherwise `applicant.cv_path`)
 
 For unique custom fields:
 - Salary expectation → `applicant.salary_expectation` (convert monthly/annual as the form requires)
@@ -93,7 +105,11 @@ For unique custom fields:
 
 #### c) Summarize + ask to submit
 
-After prefill, list what's filled (one line per field) and any open custom-essay fields the user must address. Ask: **"Submit?"**
+After prefill, list what's filled (one line per field) and any open custom-essay fields the user must address. Include which CV was used, same reporting style as the other prefilled fields:
+- `"Resume: Using tailored CV (reviewed/approved)"` when `{cv_path}` resolved to the tailored PDF, or
+- `"Resume: Using default CV (no approved tailored version for this listing)"` when it fell back to `applicant.cv_path`.
+
+Ask: **"Submit?"**
 
 If user says yes → click Submit, verify success (URL changes to /confirmation, or "Application submitted" appears).
 
@@ -153,6 +169,7 @@ When user signals stop ("done", "that's enough", "stop"), summarize:
 - **Microsoft careers** (`apply.careers.microsoft.com`): MS account required. Often redirects.
 - **Lever** (`jobs.lever.co/<company>`): single-page, similar to Greenhouse.
 - **LinkedIn Easy Apply** (no canonical link found): if the listing's `url` is a `linkedin.com/jobs/view/...` URL, the role is Easy-Apply-only. User must apply via LinkedIn directly.
+- **Spark Hire** (`Powered by Spark Hire` footer, often embedded on a company's own custom-built careers page — the URL won't look like a dedicated ATS domain): the form frequently sits inside a cross-origin iframe. If using browser tools that only support pixel-coordinate clicks (no direct DOM/accessibility-tree access into the iframe, as with Chrome extension-based automation rather than a dedicated Playwright MCP), field clicks may silently fail to focus the real input, or a click can land on the wrong element after the page reflows between actions (observed: a misfire navigated away to the site's Privacy Notice page instead of filling the Email field). If 2 field-fill attempts don't visibly register (zoom in to confirm — don't trust a screenshot that looks unchanged), stop retrying and hand off to the user to complete manually, per the "avoid rabbit holes" rule. Don't burn more than ~2 attempts on this ATS type specifically.
 
 ## What to skip
 

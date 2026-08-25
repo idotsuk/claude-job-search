@@ -40,7 +40,12 @@ Before anything else, establish **today's actual date** from the environment con
    - **Playwright (Python)** — `python3 -c "import playwright"`. Powers `scripts/linkedin_sweep.py` and the other sweep scripts. If missing, nudge: `pip install -r scripts/requirements.txt && python -m playwright install`. This is the highest-value integration — without it the LinkedIn sweep (usually the top source) is skipped.
    - **Playwright MCP** — are `mcp__playwright__*` tools available (ToolSearch)? Used for interactive board fallbacks and by `/apply`. If missing, nudge: `claude mcp add playwright -- npx -y @playwright/mcp@latest`.
    - **Gmail** — is a Gmail MCP/connector available (search tools for gmail/search_threads)? Gate step 6 on this AND `{gmail_enabled}`. If missing, nudge to connect a Gmail integration.
-   - **WhatsApp** — does `{wa_chat_db}` exist on disk AND `{wa_enabled}`? Gate step 7. If missing, nudge: see `docs/whatsapp-setup.md`.
+   - **WhatsApp** — does `{wa_chat_db}` exist on disk AND `{wa_enabled}`? If either is false, skip step 7 and nudge: see `docs/whatsapp-setup.md` (full bridge setup, ~20 min). If both true, that only proves the bridge was *set up* — the local GOWA process may be intentionally left off between runs, not always-on. Step 7 reads the SQLite file directly and works fine offline, so this check is about freshness, not availability. Check liveness: call `mcp__whatsapp__whatsapp_connection_status` (ToolSearch it if not yet loaded).
+     - Returns `is_connected: true` and `is_logged_in: true` → bridge is live, data is current as of now; gate step 7 open, no prompt needed.
+     - Tool isn't registered, the call errors, or it returns not-connected → bridge is offline, the file may be stale. **Ask the user**: "WhatsApp bridge isn't running — (s)tart it to sync fresh messages first, (u)se the existing data as-is, or (k)ip this step?"
+       - **Start** → run `cd ~/gowa/src && nohup ./whatsapp mcp > /tmp/gowa-mcp.log 2>&1 & disown`, wait ~3s, re-check `whatsapp_connection_status` (reconnecting a paired device catches up on messages received while offline), then gate step 7 open.
+       - **Use existing** → gate step 7 open as-is; note in the run report that WhatsApp data may be stale (bridge was offline this run) so a gap in coverage is visible, not silent.
+       - **Skip** → skip step 7 this run and record `whatsapp_db (bridge not running, skipped by user)` in `sources_skipped` — distinct from the never-set-up case, so the run report doesn't wrongly suggest a full setup is needed.
    - **Calendar** — is a Google Calendar MCP available AND `{cal_enabled}`? Gate step 7a.
 
    ATS JSON APIs and web search need no integration — a run with zero connections still sweeps company boards and discovers sources.
@@ -80,12 +85,20 @@ The seed registry ships with only the three tier-1 sources (LinkedIn, Gmail, Wha
 
 Registry conventions:
 - **Tier-1 is demotion-exempt.** Zero-yield runs on tier-1 sources never demote them.
-- **Self-healing company sweep:** if `{target_companies}` is non-empty and no `company_careers_direct` entry exists in the registry, append one (`tier: 1`, `type: company_careers`) before sweeping.
+- **Self-healing company sweep (the curated company watchlist):** if `{target_companies}` is non-empty and no `company_careers_direct` entry exists in the registry, append one (`tier: 1`, `type: company_careers`) before sweeping. This is the zero-token watchlist source described in step 3a below.
 
 Run all of the following in parallel during one search pass.
 
-#### a) Company-specific searches (only if `{target_companies}` is non-empty)
-For each target company, sweep the canonical careers/Greenhouse/Lever/Comeet/Workday board for new roles matching `{seniority}` + `{interests}`. Don't stop early. If the list is empty, skip this substep — the registry + discovery pipeline covers the field.
+#### a) Company-specific searches — the curated company watchlist (only if `{target_companies}` is non-empty)
+
+`{target_companies}` (`search.target_companies` in config.yaml) doubles as a curated watchlist: a pre-configured list of companies to poll directly every run, independent of whatever LinkedIn/Getro/curated-list sources happen to surface that day — the same "direct API polling against a pre-configured company list" pattern career-ops uses at scale in `portals.yml`, adapted here rather than copied. Each entry is either:
+
+- **A rich entry with known ATS coordinates** — `{name, ats, board}` (e.g. `{name: Wiz, ats: greenhouse, board: wiz}`). **Zero-token, no resolution step**: call the board's public JSON API directly, using the exact same endpoint patterns as step 3b (Greenhouse/Lever/Ashby/Comeet). This is the whole point of the watchlist — skip discovery entirely for companies you already know the board for. Never invent or guess ATS coordinates for an entry that doesn't specify them.
+- **A plain company-name string** (legacy/lower-effort form, unchanged from before this feature) — resolve the canonical careers board first (check `data/company-index.yaml` for a cached `ats:` ref from a prior curated-list sweep, else search `site:careers.<company>.com "<role>"` or the company's known ATS), then sweep it. This costs a small resolution step every run. If resolution succeeds, mention the discovered `{ats, board}` in the run report so the user can paste it back into config.yaml as a rich entry — turning it zero-token for every future run.
+
+Either form is matched against `{seniority}` + `{interests}` the same as any other source, deduped via step 4, and written via step 5 with `source: company_careers_direct` (the registry id for this source, from the self-healing bullet above) so the run report and `scripts/source_yield.py` attribute results back to the watchlist. Don't stop early. If the list is empty, skip this substep entirely — the registry + discovery pipeline covers the field.
+
+**Design note (why this isn't a separate `data/company-watchlist.yaml`):** a user-curated "poll this company directly" list and per-company ATS metadata to skip resolution are the same underlying idea once a `target_companies` entry can be a plain name *or* a name+ATS-coordinates mapping — no need for a second file or a second lifecycle. `data/company-index.yaml` (step 3f) already established the `<ats>:<slug>` convention this reuses. Keeping watchlist entries in `config.yaml` — rather than a new gitignored data file — keeps ad-hoc "add Company X to the watchlist" edits in the same place as the user's other personal company lists (`target_companies` itself, `company_blocklist`, `rejected_companies`), instead of splitting one concept across two files.
 
 #### b) Tier-1 + tier-2 sources from registry
 Sweep every source in `data/sources.yaml` with `tier: 1` or `tier: 2` using its `query_template` or `url`. Tier-1 is always swept; tier-2 is swept AND measured.
@@ -257,7 +270,7 @@ If you processed 0 emails but the inbox window had > 0 threads matching ATS send
 
 ### 7. Scan WhatsApp for recruiter messages
 
-**Gate:** skip this step (and note it in `sources_skipped`) unless `{wa_enabled}` is true AND `{wa_chat_db}` exists on disk. Nudge once: the local WhatsApp bridge takes ~20 minutes to set up — see `docs/whatsapp-setup.md`.
+**Gate:** decided in step 0a (config + file-existence check, plus a live `whatsapp_connection_status` check with a start/use-stale/skip prompt if the bridge is set up but not currently running). If step 0a's answer was "skip," skip this step — it's already recorded in `sources_skipped`. Otherwise proceed (the scan works the same whether the bridge is live or the data is a stale snapshot — only freshness differs).
 
 Messages live in `{wa_chat_db}` (SQLite). Contact names in `{wa_contacts_db}:whatsmeow_contacts`.
 
