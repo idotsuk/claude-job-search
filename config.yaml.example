@@ -101,13 +101,6 @@ search:
   linkedin_contacts_csv_path: ~/Downloads/Connections.csv
 
   network_scan:
-    # How many days a resolved company's careers-page cache entry
-    # (data/company-careers.yaml) stays fresh before /network-scan
-    # re-resolves it. Default 30, matching the skill's intended monthly
-    # cadence — contacts' employers don't change often enough to justify
-    # a shorter window (a 7-day window would make every monthly run treat
-    # the whole cache as stale and re-resolve everything from scratch).
-    cache_freshness_days: 30
     # Default number of most-recently-connected contacts to scan when
     # /network-scan is run with no argument. Override per run with
     # `/network-scan 100` or `/network-scan all`.

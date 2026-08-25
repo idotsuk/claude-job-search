@@ -1,6 +1,6 @@
 # Exporting your LinkedIn contacts for `/network-scan`
 
-`/network-scan` needs a CSV of your LinkedIn connections (name, current company, position) to know whose employers to check for openings. LinkedIn doesn't expose this via a simple "download connections" button — you request it through **Get a copy of your data**, a general data-export tool that also happens to include a `Connections.csv`.
+`/network-scan` needs a CSV of your LinkedIn connections (name, current company, position) to know which of your tracked listings' companies you already have a contact at. LinkedIn doesn't expose this via a simple "download connections" button — you request it through **Get a copy of your data**, a general data-export tool that also happens to include a `Connections.csv`.
 
 ## 1. Request the export
 

@@ -11,3 +11,7 @@ data/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Playwright MCP runtime cache/logs (accumulates at repo root when the MCP
+# server's cwd is here — not repo content)
+.playwright-mcp/

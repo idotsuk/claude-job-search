@@ -8,7 +8,7 @@ An agentic job-search pipeline for [Claude Code](https://claude.com/claude-code)
 - **`/score-listings`** — scores every "To Apply" listing 0–100 for pure technical/domain fit against your CV, with a plain-English verdict explaining the number, and a self-contained HTML report. Run this before you start applying, so you work the best-fit roles first.
 - **`/tailor-cv`** — generates a per-job tailored, one-page CV: reorders and lightly rephrases your real content for relevance, never invents anything. Manual mode targets one listing by name; batch mode processes every scored listing above your configured threshold.
 - **`/apply`** — the application assistant. Works your "To Apply" queue one role at a time: opens the canonical posting, prefills standard fields from your config, and **never submits without your explicit go-ahead**.
-- **`/network-scan`** — an occasional (e.g. monthly) sweep of your LinkedIn connections' current employers: resolves their careers pages, checks for matching openings, and flags "you know someone here" on any listing, new or already tracked.
+- **`/network-scan`** — an occasional (e.g. monthly) check of your LinkedIn connections' current employers against the listings `/job-search` already found: flags "you know someone here — reach out before applying" on any match. Doesn't discover jobs itself; finding roles is `/job-search`'s job alone.
 - **A plain-files data model** — every tracked role is a markdown file with YAML frontmatter and a communications log. Grep it, edit it, sync it to Obsidian, or pipe it anywhere.
 
 Everything personal lives in gitignored files (`config.yaml`, `standard-answers.md`) and the gitignored `data/` tree. The skills themselves contain zero personal information — clone this repo and it works the same for anyone, starting from *your* CV, not the CV it happened to be built against.
@@ -35,7 +35,7 @@ The first run creates `data/`, seeds the source registry, and — if `applicant.
 /score-listings   # rank the queue against your CV; asks a one-time setup question the first time (see below)
 /tailor-cv        # optional: generate a tailored CV PDF for a specific role, or a batch of top-scored ones
 /apply            # work the queue, highest-scored first; never submits without your go-ahead
-/network-scan     # optional, occasional: check your LinkedIn connections' companies for openings
+/network-scan     # optional, occasional: flag which tracked listings you have a contact at
 ```
 
 ### Bringing your own CV
@@ -67,7 +67,7 @@ Two related pieces:
 | Piece | Install | Powers |
 |---|---|---|
 | Python `playwright` package | `pip install -r scripts/requirements.txt` | `scripts/linkedin_sweep.py` — the authenticated LinkedIn sweep, usually the single highest-yield source — plus the Getro/board scrapers, and `/tailor-cv`'s PDF rendering |
-| Playwright MCP | `claude mcp add playwright -- npx -y @playwright/mcp@latest` | Interactive board fallbacks in `/job-search` and `/network-scan`, and all of `/apply` (form prefill) |
+| Playwright MCP | `claude mcp add playwright -- npx -y @playwright/mcp@latest` | Interactive board fallbacks in `/job-search`, and all of `/apply` (form prefill) — `/network-scan` needs no browser at all |
 
 The LinkedIn sweep uses your **system Chrome** with a persistent profile at `data/.sessions/linkedin/` — you log in once in a visible window, and the session is reused on every later run. Your credentials never pass through Claude; you type them into LinkedIn's own login page.
 
@@ -127,7 +127,7 @@ For a single listing (`/tailor-cv <company or role>`) or in batch (`/tailor-cv` 
 
 ### `/network-scan`
 
-Reads your exported LinkedIn connections, resolves each unique current employer to a careers-page URL (cached, ~30-day freshness), scans those pages for roles matching your profile, writes any genuinely new ones, and retroactively flags `warm_contact: true` on *any* listing — new or already tracked — at a company where you have a contact.
+Reads your exported LinkedIn connections, extracts each unique current employer, and checks whether that company already has a tracked listing in `data/listings/` — found by `/job-search`, or by an earlier `/network-scan` run. Where it does, flags `warm_contact: true` and `contact_name` so you know exactly who to message before applying. It never visits a careers page or writes a new listing — job discovery stays entirely with `/job-search`.
 
 ### The source registry
 
