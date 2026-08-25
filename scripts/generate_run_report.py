@@ -27,13 +27,8 @@ RUNS_DIR = DATA / 'runs'
 REPORTS_DIR = DATA / 'reports'
 CHART_PATH = DATA / 'reports' / 'chart-latest.png'
 
-STATUS_ORDER = ['Interviewing', 'Screen', 'Offer', 'Applied', 'Stale', 'To Apply', 'Rejected', 'Skipped']
-STATUS_COLORS = {
-    'To Apply': '#42a5f5', 'Applied': '#26a69a', 'Screen': '#ffa726',
-    'Interviewing': '#ab47bc', 'Offer': '#66bb6a',
-    'Stale': '#8d6e63',
-    'Rejected': '#ef5350', 'Skipped': '#bdbdbd',
-}
+STATUS_ORDER = lib.STATUS_ORDER
+STATUS_COLORS = lib.STATUS_COLORS
 
 
 def parse_frontmatter(text):
@@ -349,7 +344,11 @@ def generate(run, listings, chart_b64):
         return None
 
     md = markdown.Markdown(extensions=['tables', 'fenced_code'])
-    report_html = md.convert(body)
+    # Escape raw HTML in the source before conversion -- body can quote
+    # scraped/untrusted content (job titles, company names, recruiter
+    # message snippets), and python-markdown passes raw HTML through
+    # unmodified otherwise (no safe_mode since 3.0).
+    report_html = md.convert(html.escape(body))
 
     chart_html = (
         f'<img class="chart" src="data:image/png;base64,{chart_b64}" '
