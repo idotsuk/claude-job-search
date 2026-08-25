@@ -75,7 +75,8 @@ Skill markdown is the source of truth for *process* (what order steps happen in,
 - `data/company-index.yaml` — persistent per-company triage cache used by curated-list sweeps (job-search step 3f), so a "best startups of 2026" article never gets re-triaged company-by-company on a later run.
 - `data/company-careers.yaml` — `/network-scan`'s careers-page resolution cache, keyed by company name, with a configurable freshness window.
 - `data/career-notes.md` — optional, user-authored richer background beyond the one-page CV (see below); read by `/score-listings` and `/tailor-cv` when `career_notes.use_interview` is `true`.
-- `data/cv-base-content.yaml`, `data/cv-outputs/<stem>/` — `/tailor-cv`'s baseline CV content and per-listing tailored output (payload + rendered PDF).
+- `data/cv-base-content.yaml`, `data/cv-outputs/<stem>/` — `/tailor-cv`'s baseline CV content (bootstrapped once from the user's own CV on first run, see below) and per-listing tailored output (payload + rendered PDF).
+- `data/cv-template/cv-template.html` + `data/cv-template/fonts/*.ttf` — optional, per-user personalized template matching the user's own CV's design, built by `/tailor-cv` step 0 only if they opt in with a `.docx`. Falls back to the shared `templates/cv-template.html` when absent.
 - `data/runs/run-N.md`, `data/reports/chart-latest.png`, `data/reports/run-N.html`, `data/reports/match-scores-latest.html` — per-run audit trail and self-contained shareable reports.
 
 ### Config-driven, not hard-coded

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Fill templates/cv-template.html with a tailored content payload and render
-it to a one-page PDF via Playwright/Chromium.
+Fill a CV template (templates/cv-template.html by default, or a personalized
+--template override) with a tailored content payload and render it to a
+one-page PDF via Playwright/Chromium.
 
 This is the deterministic half of the /tailor-cv skill: the skill (agentic,
 judgment) decides *what* the CV should say for a given job; this script
@@ -185,7 +186,7 @@ def strip_or_drop_sections(text: str, drop_sections) -> str:
 
 # ------------------------------------------------------------------- fill ---
 
-def fill_template(template_html: str, payload: dict) -> str:
+def fill_template(template_html: str, payload: dict, fonts_dir: Path = FONTS_DIR) -> str:
     text = template_html
 
     text = strip_or_drop_sections(text, payload.get('drop_sections'))
@@ -207,10 +208,12 @@ def fill_template(template_html: str, payload: dict) -> str:
         'LINKEDIN_DISPLAY': payload.get('linkedin_display', ''),
     })
 
-    # Point @font-face at the shared templates/fonts/*.ttf via absolute
-    # file:// URIs, since cv.html lives under data/cv-outputs/<slug>/ rather
-    # than next to templates/fonts/ — a relative "fonts/..." URL would 404.
-    fonts_uri = FONTS_DIR.resolve().as_uri()
+    # Point @font-face at the template's own fonts/*.ttf (sibling directory of
+    # whichever template.html was filled — the shared templates/fonts/ by
+    # default, or a personalized data/cv-template/fonts/ override) via
+    # absolute file:// URIs, since cv.html lives under data/cv-outputs/<slug>/
+    # rather than next to the fonts dir — a relative "fonts/..." URL would 404.
+    fonts_uri = fonts_dir.resolve().as_uri()
     text = text.replace('url("fonts/', f'url("{fonts_uri}/')
 
     leftover = re.findall(r'\{\{[A-Z_]+\}\}', text)
@@ -300,6 +303,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--input', help='Path to JSON payload file. Default: read JSON from stdin.')
     ap.add_argument('--out-dir', required=True, help='Output directory. Writes cv.html and cv.pdf here.')
+    ap.add_argument('--template', help=(
+        'Path to the template HTML to fill. Default: templates/cv-template.html '
+        '(the shared generic design). Pass a personalized template here (e.g. '
+        'data/cv-template/cv-template.html) to use a design extracted from the '
+        "user's own CV instead — its fonts/*.ttf must live in a sibling "
+        "'fonts/' directory next to the template file, same layout as templates/."
+    ))
     args = ap.parse_args()
 
     raw = Path(args.input).read_text() if args.input else sys.stdin.read()
@@ -309,8 +319,14 @@ def main():
         print(f'Invalid JSON payload: {e}', file=sys.stderr)
         sys.exit(2)
 
-    if not TEMPLATE_PATH.exists():
-        print(f'Template not found at {TEMPLATE_PATH}', file=sys.stderr)
+    template_path = Path(args.template) if args.template else TEMPLATE_PATH
+    fonts_dir = template_path.parent / 'fonts'
+
+    if not template_path.exists():
+        print(f'Template not found at {template_path}', file=sys.stderr)
+        sys.exit(2)
+    if not fonts_dir.exists():
+        print(f'Fonts directory not found at {fonts_dir} (expected as a sibling of the template)', file=sys.stderr)
         sys.exit(2)
 
     out_dir = Path(args.out_dir)
@@ -318,9 +334,9 @@ def main():
     html_path = out_dir / 'cv.html'
     pdf_path = out_dir / 'cv.pdf'
 
-    print(f'Filling template for {payload.get("name", "?")} ...', file=sys.stderr)
+    print(f'Filling template ({template_path}) for {payload.get("name", "?")} ...', file=sys.stderr)
     try:
-        filled = fill_template(TEMPLATE_PATH.read_text(), payload)
+        filled = fill_template(template_path.read_text(), payload, fonts_dir=fonts_dir)
     except ValueError as e:
         print(f'Template fill failed: {e}', file=sys.stderr)
         sys.exit(1)

@@ -1,17 +1,33 @@
 # CV template schema
 
 `templates/cv-template.html` is a deterministic fill target for the
-`/tailor-cv` skill. This document describes the placeholder and
-repeating-block convention so that skill can fill the template
-programmatically without guessing.
+`/tailor-cv` skill — the shared, generic default design every user gets out
+of the box. This document describes the placeholder and repeating-block
+convention so that skill can fill the template programmatically without
+guessing.
 
-## Source of truth for the design
+**This is not the only template a user might end up with.** `/tailor-cv`
+step 0 can also build a *personalized* template — same schema, different
+design — at `data/cv-template/cv-template.html` (+ `data/cv-template/fonts/`),
+extracted from a user's own `.docx` CV the first time they opt into it. That
+personalized file is gitignored, per-user, and takes priority over this
+shared default whenever it exists (see "Building a personalized template"
+below). Everything in this document about the placeholder/block *schema*
+applies equally to both; only the "Source of truth for the design" section
+below is specific to the shipped default.
 
-The template's fonts, colors, spacing, and section order were extracted
-directly from the user's own CV, a Google Docs export (`.docx`) held under
-`data/cv-source/` (gitignored — real personal content), via `python-docx` +
-raw OOXML inspection — not eyeballed or recreated from a generic resume
-look. See "Fidelity notes" below for the handful of deliberate deviations.
+## Source of truth for the design (the shipped default only)
+
+This shared template's fonts, colors, spacing, and section order were
+extracted directly from one specific user's own CV, a Google Docs export
+(`.docx`), via `python-docx` + raw OOXML inspection — not eyeballed or
+recreated from a generic resume look. It's a perfectly reasonable universal
+default (a common serif/sans-serif professional pairing, standard letter
+layout), but it is literally one person's original design, tokenized. A
+personalized per-user template (see below) replaces these specific values
+with the *current* user's own — same method, different source document. See
+"Fidelity notes" below for the handful of deliberate deviations made when
+this default was first built.
 
 - **Layout**: single page, US Letter, two-column body (main column ~68.5%
   width / sidebar ~31.5% width — the exact ratio from the source docx's
@@ -151,9 +167,37 @@ implement:
   the docx's OOXML (`styles.xml`, `numbering.xml`, run-level `w:rPr`
   overrides) rather than approximated.
 
+## Building a personalized template
+
+`/tailor-cv` step 0 offers this to any user who has their CV as a `.docx` and
+wants their tailored output to look like their own resume rather than the
+shipped default. The method is exactly the one described above, just run
+against a different source document:
+
+1. Read the user's `.docx` with `python-docx`.
+2. Extract fonts, colors, spacing, section order, and the bullet glyph from
+   its OOXML (`styles.xml`, `numbering.xml`, run-level `w:rPr` overrides),
+   and the column-width ratio from its table grid, the same way this
+   document's "Source of truth for the design" section describes.
+3. Extract any embedded fonts (Google Docs `.docx` exports typically bundle
+   the TTFs used) into `data/cv-template/fonts/*.ttf`.
+4. Start from `templates/cv-template.html`'s own structure (the
+   `{{PLACEHOLDER}}` / `<!--BLOCK:...-->` / `<!--SECTION:...-->` markers must
+   stay byte-identical in name and nesting — only the CSS design tokens and
+   the `@font-face` font-family names/files change) and write the result to
+   `data/cv-template/cv-template.html`.
+5. `scripts/render_cv.py --template data/cv-template/cv-template.html ...`
+   then fills this instead of the shared default — see that script's
+   `--template` flag.
+
+If the user doesn't have a `.docx`, or extraction fails, `/tailor-cv` falls
+back to the shared default (`templates/cv-template.html`) and says so — this
+is a genuine optional upgrade, never a blocker.
+
 ## Files
 
-- `templates/cv-template.html` — the reusable template with placeholders/blocks (this schema describes it) — generic, safe to commit
-- `templates/fonts/*.ttf` — the 8 font files (Merriweather/Open Sans × regular/bold/italic/bold-italic) referenced by `@font-face` in the template — generic, safe to commit
-- `data/cv-source/cv-template-sample.html` — the template filled with the user's real, current CV content (first real render, produced by the throwaway script described above) — **gitignored, real PII, never commit**
-- `data/cv-source/cv-template-sample.pdf` — that sample rendered to PDF via Playwright/Chromium, confirmed one page (`/Count 1` in the PDF's page tree) — **gitignored, real PII, never commit**
+- `templates/cv-template.html` — the shared, generic default template with placeholders/blocks (this schema describes it) — safe to commit, ships with the repo.
+- `templates/fonts/*.ttf` — the 8 font files (Merriweather/Open Sans × regular/bold/italic/bold-italic) referenced by `@font-face` in the default template — safe to commit.
+- `data/cv-template/cv-template.html` + `data/cv-template/fonts/*.ttf` — **optional, per-user**, built by `/tailor-cv` step 0 only when a user opts into design personalization from their own `.docx` — **gitignored** (design extracted from a real personal document, even though the file itself is just CSS/HTML/font binaries, not text PII).
+- `data/cv-source/cv-template-sample.html` — a filled render of the shared default template with one specific user's real, current CV content, kept only as a fidelity-check artifact from when this default was first built — **gitignored, real PII, never commit**.
+- `data/cv-source/cv-template-sample.pdf` — that sample rendered to PDF via Playwright/Chromium, confirmed one page (`/Count 1` in the PDF's page tree) — **gitignored, real PII, never commit**.
