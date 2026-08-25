@@ -54,6 +54,8 @@ Rank the To Apply list by fit against the config profile:
 
 **If a listing has `match_score`/`match_verdict` frontmatter** (set by `/score-listings`), use it as a secondary sort within each tier — highest `match_score` first — and surface the one-line verdict alongside the fit note, e.g. `"[82] strong domain match — production LLM/agentic experience directly overlaps this role's stack."` Listings without `match_score` keep today's unchanged tier-only ordering — never block or reorder the queue waiting on a score.
 
+**If a listing has `warm_contact: true`/`contact_name` frontmatter** (set by `/network-scan`), surface it inline in the queue too — e.g. `"🤝 warm contact: Gilad Sagi (Associate Account Manager)"` — right alongside the match-score line. Don't use it to reorder tiers (a warm contact doesn't change technical fit), just make it visible so the user can decide to reach out before applying.
+
 Group secondarily by ATS for momentum (Greenhouse → Ashby → Comeet → SmartRecruiters → Workday → Microsoft careers → others). Greenhouse/Ashby are fastest; Workday is slowest (often requires account creation).
 
 Present the ordered list to the user. Ask: "Start with #1 [Company — Role]?"
@@ -64,6 +66,8 @@ For each role:
 
 #### a) Confirm
 "**[Company] — [Role]** · [Location], [hybrid/onsite] · [ATS] · [1-line fit note] · Apply?"
+
+**If `warm_contact: true`/`contact_name` is set on this listing**, lead with it before asking to apply — this is the moment it's actually actionable, not just informational: "🤝 You know **{contact_name}** here (via `/network-scan`) — worth reaching out before applying cold. Apply anyway, or hold off first?" Don't block on this or assume the user has reached out; just make sure they can't miss it at the one point where cold-applying is about to become irreversible.
 
 If user says skip/pass/no → update the listing file's frontmatter: `status: Passed`, append a note in the body explaining why. Move to next.
 

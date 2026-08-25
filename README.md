@@ -7,7 +7,7 @@ An agentic job-search pipeline for [Claude Code](https://claude.com/claude-code)
 - **`/job-search`** — the sweep. LinkedIn (authenticated, via Playwright), company career boards (ATS JSON APIs first — Greenhouse/Lever/Ashby/Comeet — no browser needed), a curated company watchlist (`search.target_companies` in `config.yaml` — give a company its known ATS board and it's polled directly, zero-token, no discovery step needed), curated startup-list sweeps, plus a self-growing source registry: every run discovers new candidate sources, smoke-tests them, and promotes the ones that yield. Gmail and WhatsApp scans update your pipeline statuses automatically. Ends with a run report, a delta chart, and a self-contained HTML dashboard.
 - **`/score-listings`** — scores every "To Apply" listing 0–100 for pure technical/domain fit against your CV, with a plain-English verdict explaining the number, and a self-contained HTML report. Run this before you start applying, so you work the best-fit roles first.
 - **`/tailor-cv`** — generates a per-job tailored, one-page CV: reorders and lightly rephrases your real content for relevance, never invents anything. Manual mode targets one listing by name; batch mode processes every scored listing above your configured threshold.
-- **`/apply`** — the application assistant. Works your "To Apply" queue one role at a time: opens the canonical posting, prefills standard fields from your config, and **never submits without your explicit go-ahead**.
+- **`/apply`** — the application assistant. Works your "To Apply" queue one role at a time: opens the canonical posting, prefills standard fields from your config, surfaces a warm-contact nudge right before you'd apply cold if `/network-scan` found one, and **never submits without your explicit go-ahead**.
 - **`/network-scan`** — an occasional (e.g. monthly) check of your LinkedIn connections' current employers against the listings `/job-search` already found: flags "you know someone here — reach out before applying" on any match. Doesn't discover jobs itself; finding roles is `/job-search`'s job alone.
 - **A plain-files data model** — every tracked role is a markdown file with YAML frontmatter and a communications log. Grep it, edit it, sync it to Obsidian, or pipe it anywhere.
 
@@ -198,7 +198,6 @@ Why it fits.
 
 - Cold-outreach queue (funding-signal targeting with a hard per-message approval gate) — deliberately left out of v1.
 - More shared scrapers (`scripts/<source>_sweep.py` pattern) as the community's registries discover common boards.
-- Surfacing `cv_status: draft` / `warm_contact: true` badges directly in the `/apply` queue ordering, not just the match-score report.
 
 ## License
 
