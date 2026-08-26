@@ -518,8 +518,10 @@ PAGE_TEMPLATE = """<!doctype html>
   h1 { color: #1a3a5c; font-size: 22px; border-bottom: 3px solid #1565c0; padding-bottom: 10px;
        display: flex; justify-content: space-between; align-items: center; }
   .nav-controls { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: normal; color: #666; }
-  .progress-wrap { background: #eef2f7; border-radius: 6px; height: 8px; margin: 14px 0 26px; overflow: hidden; }
+  .progress-wrap { background: #eef2f7; border-radius: 6px; height: 8px; margin: 14px 0 12px; overflow: hidden; }
   .progress-bar { background: #1565c0; height: 100%; width: 0%; transition: width .2s; }
+  .live-stats { display: flex; gap: 18px; font-size: 13px; color: #666; margin: 0 0 26px; flex-wrap: wrap; }
+  .live-stats b { color: #1a3a5c; }
   .card { background: #f7f9fc; border: 1px solid #e0e0e0; border-radius: 10px; padding: 24px 28px; min-height: 220px; }
   .card h2 { margin: 0 0 2px; color: #1a3a5c; font-size: 22px; }
   .card .role { font-size: 16px; color: #333; margin-bottom: 10px; }
@@ -609,6 +611,7 @@ PAGE_TEMPLATE = """<!doctype html>
   </span>
 </h1>
 <div class="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div>
+<div class="live-stats" id="live-stats"></div>
 
 <div id="stage"></div>
 <div class="toast" id="toast"></div>
@@ -707,6 +710,7 @@ function render() {
   prevBtn.disabled = idx <= 0;
   nextBtn.disabled = idx >= queue.length;
   syncUndoButton();
+  renderStats();
   pickerOpen = false;
   if (idx >= queue.length) {
     renderDone();
@@ -809,6 +813,20 @@ function refreshReviewPanel() {
   if (reviewOpen) document.getElementById('review-body').innerHTML = renderGroupedSummary(groupDecisions(), true);
 }
 
+// Always-visible tally (Reviewed X / N, plus a per-bucket breakdown) shown
+// under the progress bar — same groupDecisions() data the Review panel and
+// Finish screen already summarize, just surfaced without opening anything.
+function renderStats() {
+  const el = document.getElementById('live-stats');
+  if (!el || !queue.length) return;
+  const groups = groupDecisions();
+  const reviewed = groups.apply.length + groups.reconsider.length + groups.declined.length;
+  el.innerHTML = `<span>Reviewed <b>${reviewed}</b> / ${queue.length}</span>` +
+    `<span>Apply <b>${groups.apply.length}</b></span>` +
+    `<span>Reconsider <b>${groups.reconsider.length}</b></span>` +
+    `<span>Declined <b>${groups.declined.length}</b></span>`;
+}
+
 // Re-decide a listing straight from the Review panel. Moving to Apply or
 // Reconsider is a one-click transition (decide() already handles re-deciding
 // an already-decided file). Moving to Decline needs a reason, so instead of
@@ -828,6 +846,7 @@ async function changeStatus(file, newKind) {
   lastDecidedFile = file;
   syncUndoButton();
   refreshReviewPanel();
+  renderStats();
 }
 
 // Fully reverts a listing to how it looked before this session touched it —
@@ -840,6 +859,7 @@ async function revertItem(file) {
   if (lastDecidedFile === file) lastDecidedFile = null;
   syncUndoButton();
   refreshReviewPanel();
+  renderStats();
   toast('Removed — back in the queue');
 }
 

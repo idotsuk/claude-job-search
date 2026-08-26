@@ -477,6 +477,27 @@ class TriageServerHttpTest(unittest.TestCase):
         self.assertEqual(self.mod._session_counts['apply'], 0)
         self.assertIn('status: Skipped', (self.listings_dir / 'acme-backend.md').read_text())
 
+    def test_page_includes_live_stats_strip_wired_into_every_mutation_point(self):
+        # No JS engine here, so this can't assert on rendered numbers — it's
+        # a regression guard that the live-stats markup ships and stays
+        # wired into every place client-side `decisions` changes (render(),
+        # changeStatus(), revertItem()); undo() is covered indirectly since
+        # it already calls render(). Losing any of these would silently
+        # freeze the dashboard instead of erroring.
+        html = self.mod.render_page([{
+            'file': 'acme-backend.md', 'company': 'Acme', 'role': 'Backend Engineer',
+            'location': 'Berlin', 'level': 'Senior', 'type': 'Backend',
+            'url': '', 'first_added': '2026-08-01', 'blurb': 'great fit',
+        }])
+        self.assertIn('id="live-stats"', html)
+        self.assertIn('function renderStats()', html)
+        render_body = html.split('function render()', 1)[1].split('function renderDone()', 1)[0]
+        self.assertIn('renderStats();', render_body)
+        change_status_body = html.split('async function changeStatus(', 1)[1].split('async function revertItem(', 1)[0]
+        self.assertIn('renderStats();', change_status_body)
+        revert_item_body = html.split('async function revertItem(', 1)[1].split('function renderDone()', 1)[0]
+        self.assertIn('renderStats();', revert_item_body)
+
 
 if __name__ == '__main__':
     unittest.main()
